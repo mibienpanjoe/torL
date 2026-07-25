@@ -2,7 +2,6 @@
 
 const dgram = require('dgram');
 const Buffer = require('buffer').Buffer;
-const urlParse = require('url').parse;
 const crypto = require('crypto'); 
 const torrentParser = require('./torrent-parser');
 const util = require('./util');
@@ -32,16 +31,18 @@ module.exports.getPeers = (torrent, callback) => {
 };
 
 function udpSend(socket, message, rawUrl, callback=()=>{}) {
-  const url = urlParse(rawUrl);
+  const url = new URL(rawUrl);
   socket.send(message, 0, message.length, url.port, url.hostname, callback);
 }
 
+//identify the type of the response received from the tracker
 function respType(resp) {
   const action = resp.readUInt32BE(0);
   if (action === 0) return 'connect';
   if (action === 1) return 'announce';
 }
 
+//connect request function
 function buildConnReq() {
    const buf = Buffer.alloc(16); 
 
@@ -56,6 +57,7 @@ function buildConnReq() {
   return buf;
 }
 
+//connect response parser 
 function parseConnResp(resp) {
   return {
     action: resp.readUInt32BE(0),
@@ -64,6 +66,7 @@ function parseConnResp(resp) {
   }
 }
 
+//announce request
 function buildAnnounceReq(connId, torrent, port=6881) {
   const buf = Buffer.allocUnsafe(98);
 
@@ -97,6 +100,7 @@ function buildAnnounceReq(connId, torrent, port=6881) {
   return buf;
 }
 
+//announce response parser
 function parseAnnounceResp(resp) {
   function group(iterable, groupSize) {
     let groups = [];
