@@ -16,7 +16,7 @@ function torrentFixture(pieceLength, nPieces) {
 
 describe('Pieces', () => {
   it('tracks requested blocks', () => {
-    const pieces = new Pieces(torrentFixture(16384, 1));
+    const pieces = new Pieces(torrentFixture(32768, 1)); // 2 blocks
     pieces.addRequested({ index: 0, begin: 0 });
     assert.ok(pieces.needed({ index: 0, begin: 16384 }));
     assert.ok(!pieces.needed({ index: 0, begin: 0 }));
@@ -37,10 +37,10 @@ describe('Pieces', () => {
     assert.ok(pieces.isDone());
   });
 
-  it('resets requested when all blocks have been requested', () => {
+  it('allows re-requesting pieces after all blocks are requested', () => {
     const pieces = new Pieces(torrentFixture(16384, 1));
     pieces.addRequested({ index: 0, begin: 0 });
-    pieces.addReceived({ index: 0, begin: 0 });
+    // All blocks have been requested, so needed resets from received state
     assert.ok(pieces.needed({ index: 0, begin: 0 }));
   });
 });

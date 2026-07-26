@@ -147,7 +147,11 @@ export function parse(msg) {
       index: payload.readInt32BE(0),
       begin: payload.readInt32BE(4)
     };
-    payload[id === 7 ? 'block' : 'length'] = rest;
+    if (id === 7) {
+      payload.block = rest;
+    } else {
+      payload.length = rest.readUInt32BE(0);
+    }
   }
 
   return {
