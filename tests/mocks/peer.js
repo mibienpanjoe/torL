@@ -1,0 +1,68 @@
+'use strict';
+
+import net from 'net';
+import { Buffer } from 'buffer';
+import * as message from '../../src/message.js';
+import * as torrentParser from '../../src/torrent-parser.js';
+
+export function createMockPeer(torrent, data, port = 0) {
+  const server = net.createServer(socket => {
+    let receivedHandshake = false;
+    let savedBuf = Buffer.alloc(0);
+    let handshake = true;
+
+    const infoHash = torrentParser.infoHash(torrent);
+
+    function msgLen() {
+      return handshake ? savedBuf.readUInt8(0) + 49 : savedBuf.readInt32BE(0) + 4;
+    }
+
+    socket.on('data', recvBuf => {
+      savedBuf = Buffer.concat([savedBuf, recvBuf]);
+
+      while (savedBuf.length >= 4 && savedBuf.length >= msgLen()) {
+        const msg = savedBuf.slice(0, msgLen());
+        savedBuf = savedBuf.slice(msgLen());
+        handshake = false;
+
+        if (!receivedHandshake) {
+          if (msg.toString('utf8', 1, 20) === 'BitTorrent protocol' &&
+              msg.slice(28, 48).equals(infoHash)) {
+            receivedHandshake = true;
+            socket.write(message.buildHandshake(torrent));
+          } else {
+            socket.end();
+            return;
+          }
+        } else {
+          const m = message.parse(msg);
+          if (m.id === 2) {
+            socket.write(message.buildUnchoke());
+          } else if (m.id === 6) {
+            const offset = m.payload.index * torrent.info['piece length'] + m.payload.begin;
+            const block = data.slice(offset, offset + m.payload.length);
+            socket.write(message.buildPiece({
+              index: m.payload.index,
+              begin: m.payload.begin,
+              block
+            }));
+          }
+        }
+      }
+    });
+
+    socket.on('error', () => {});
+  });
+
+  return new Promise((resolve, reject) => {
+    server.on('error', reject);
+    server.listen(port, () => {
+      const address = server.address();
+      resolve({
+        ip: '127.0.0.1',
+        port: address.port,
+        close: () => server.close()
+      });
+    });
+  });
+}
