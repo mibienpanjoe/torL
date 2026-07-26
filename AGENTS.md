@@ -22,6 +22,7 @@
 - `src/download.js` returns a `Promise`, manages peer sockets as a pool with reconnection/backoff, periodically re-announces to the tracker, and uses a global `RarityMap` for rarest-first piece selection.
 - `src/Queue.js` stores the pieces each peer has and requests the rarest needed piece first.
 - `src/RarityMap.js` tracks global piece availability across connected peers.
+- `src/state.js` and `src/verify.js` support pause/resume: a `<target>.torl.state` file stores the completed bitfield, and existing files are SHA1-verified on restart.
 - `tests/mocks/` contains a local UDP tracker and TCP peer for fast, deterministic integration tests.
 
 ## Dependencies

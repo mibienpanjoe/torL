@@ -8,6 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import * as torrentParser from '../src/torrent-parser.js';
 import download from '../src/download.js';
+import * as state from '../src/state.js';
 import { createMockTracker } from './mocks/tracker.js';
 import { createMockPeer, createFlakyPeer } from './mocks/peer.js';
 
@@ -39,7 +40,7 @@ describe('download', () => {
   it('downloads a multi-file torrent from mock tracker and peer', async () => {
     const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'multi-file.torrent'));
     const file1 = Buffer.from('Hello');
-    const file2 = Buffer.from(' World!');
+    const file2 = Buffer.from(' World!\n');
     const data = Buffer.concat([file1, file2]);
 
     const peer = await createMockPeer(torrent, data);
@@ -100,6 +101,35 @@ describe('download', () => {
       const downloaded = fs.readFileSync(destPath);
       assert.deepStrictEqual(downloaded, data);
       assert.ok(tracker.getAnnounceCount() >= 2, 'expected at least one re-announce');
+    } finally {
+      tracker.close();
+      peer.close();
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
+    }
+  });
+
+  it('resumes a partial download and only fetches missing pieces', async () => {
+    const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'resume.torrent'));
+    const data = fs.readFileSync(path.join(__dirname, 'fixtures', 'resume.data'));
+    const pieceLength = torrent.info['piece length'];
+
+    // Pre-populate the first piece and a state file claiming it is done.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'torl-'));
+    const destPath = path.join(tmpDir, 'resume.txt');
+    fs.writeFileSync(destPath, data.slice(0, pieceLength));
+    const savedBitfield = state.emptyBitfield(torrent.info.pieces.length / 20);
+    state.setBit(savedBitfield, 0);
+    state.save(destPath, savedBitfield);
+
+    // Peer only has the second piece. If resume works, the download completes.
+    const peer = await createMockPeer(torrent, data, { pieces: [1] });
+    const tracker = await createMockTracker(0, [{ ip: peer.ip, port: peer.port }]);
+    torrent.announce = Buffer.from(tracker.url);
+
+    try {
+      await download(torrent, destPath, { retryDelay: 50 });
+      const downloaded = fs.readFileSync(destPath);
+      assert.deepStrictEqual(downloaded, data);
     } finally {
       tracker.close();
       peer.close();

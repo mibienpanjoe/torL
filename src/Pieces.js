@@ -1,9 +1,10 @@
 'use strict';
 
 import * as tp from './torrent-parser.js';
+import * as state from './state.js';
 
-export default class {
-  constructor(torrent) {
+export default class Pieces {
+  constructor(torrent, completedBitfield = null) {
     function buildPiecesArray() {
       const nPieces = torrent.info.pieces.length / 20;
       const arr = new Array(nPieces).fill(null);
@@ -12,6 +13,19 @@ export default class {
 
     this._requested = buildPiecesArray();
     this._received = buildPiecesArray();
+
+    if (completedBitfield) {
+      const nPieces = this._received.length;
+      for (let i = 0; i < nPieces; i++) {
+        if (state.hasBit(completedBitfield, i)) {
+          const nBlocks = this._received[i].length;
+          for (let j = 0; j < nBlocks; j++) {
+            this._requested[i][j] = true;
+            this._received[i][j] = true;
+          }
+        }
+      }
+    }
   }
 
   addRequested(pieceBlock) {
@@ -34,5 +48,20 @@ export default class {
 
   isDone() {
     return this._received.every(blocks => blocks.every(i => i));
+  }
+
+  isPieceDone(index) {
+    return this._received[index].every(b => b);
+  }
+
+  completedBitfield() {
+    const nPieces = this._received.length;
+    const bitfield = state.emptyBitfield(nPieces);
+    for (let i = 0; i < nPieces; i++) {
+      if (this.isPieceDone(i)) {
+        state.setBit(bitfield, i);
+      }
+    }
+    return bitfield;
   }
 }

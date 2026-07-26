@@ -5,6 +5,8 @@ import path from 'path';
 import net from 'net';
 import * as tracker from './tracker.js';
 import * as message from './message.js';
+import * as state from './state.js';
+import * as verify from './verify.js';
 import Pieces from './Pieces.js';
 import Queue from './Queue.js';
 import RarityMap from './RarityMap.js';
@@ -21,7 +23,16 @@ export default function download(torrent, rootPath, options = {}) {
   return new Promise((resolve, reject) => {
     const trackerController = new AbortController();
     tracker.getPeers(torrent, (peers, interval) => {
-      const pieces = new Pieces(torrent);
+      const savedBitfield = state.load(rootPath);
+      const verifiedBitfield = verify.verifyPieces(torrent, rootPath, savedBitfield);
+      const pieces = new Pieces(torrent, verifiedBitfield);
+
+      if (pieces.isDone()) {
+        state.save(rootPath, pieces.completedBitfield());
+        resolve();
+        return;
+      }
+
       const rarityMap = new RarityMap(torrent);
       const pool = new PeerPool(torrent, pieces, rootPath, rarityMap, {
         maxConnections,
@@ -283,6 +294,10 @@ function pieceHandler(socket, torrent, pieces, queue, rootPath, pieceResp, onPro
   const offset = pieceResp.index * torrent.info['piece length'] + pieceResp.begin;
   writeBlock(torrent, rootPath, pieceResp.block, offset);
 
+  if (pieces.isPieceDone(pieceResp.index)) {
+    state.save(rootPath, pieces.completedBitfield());
+  }
+
   if (pieces.isDone()) {
     onProgress();
   } else {
@@ -330,7 +345,7 @@ function writeBlock(torrent, rootPath, block, offset) {
     const fileWriteOffset = overlapStart - fileStart;
 
     fs.mkdirSync(path.dirname(file.path), { recursive: true });
-    const fd = fs.openSync(file.path, 'w');
+    const fd = fs.openSync(file.path, fs.existsSync(file.path) ? 'r+' : 'w');
     fs.writeSync(fd, block, blockSliceStart, sliceLength, fileWriteOffset);
     fs.closeSync(fd);
 
