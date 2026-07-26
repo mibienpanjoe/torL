@@ -30,6 +30,13 @@ export function createMockPeer(torrent, data, port = 0) {
               msg.slice(28, 48).equals(infoHash)) {
             receivedHandshake = true;
             socket.write(message.buildHandshake(torrent));
+            // Advertise that we have all pieces via a bitfield.
+            const nPieces = torrent.info.pieces.length / 20;
+            const bitfield = Buffer.alloc(Math.ceil(nPieces / 8));
+            for (let p = 0; p < nPieces; p++) {
+              bitfield[Math.floor(p / 8)] |= 0x80 >> (p % 8);
+            }
+            socket.write(message.buildBitfield(bitfield));
           } else {
             socket.end();
             return;
@@ -58,10 +65,16 @@ export function createMockPeer(torrent, data, port = 0) {
     server.on('error', reject);
     server.listen(port, () => {
       const address = server.address();
+      let closed = false;
       resolve({
         ip: '127.0.0.1',
         port: address.port,
-        close: () => server.close()
+        close: () => {
+          if (!closed) {
+            closed = true;
+            server.close();
+          }
+        }
       });
     });
   });

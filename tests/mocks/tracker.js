@@ -43,10 +43,16 @@ export function createMockTracker(port = 0, peers = []) {
     socket.on('error', reject);
     socket.bind(port, () => {
       const address = socket.address();
+      let closed = false;
       resolve({
         url: `udp://127.0.0.1:${address.port}`,
         port: address.port,
-        close: () => socket.close()
+        close: () => {
+          if (!closed) {
+            closed = true;
+            socket.close();
+          }
+        }
       });
     });
   });

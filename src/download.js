@@ -8,21 +8,57 @@ import Pieces from './Pieces.js';
 import Queue from './Queue.js';
 
 export default function download(torrent, path) {
-  tracker.getPeers(torrent, peers => {
-    const pieces = new Pieces(torrent);
-    const file = fs.openSync(path, 'w');
-    peers.forEach(peer => downloadFromPeer(peer, torrent, pieces, file));
-  });
-}
+  return new Promise((resolve, reject) => {
+    tracker.getPeers(torrent, peers => {
+      const pieces = new Pieces(torrent);
+      const file = fs.openSync(path, 'w');
+      const sockets = new Set();
+      let complete = false;
 
-function downloadFromPeer(peer, torrent, pieces, file) {
-  const socket = new net.Socket();
-  socket.on('error', console.log);
-  socket.connect(peer.port, peer.ip, () => {
-    socket.write(message.buildHandshake(torrent));
+      if (peers.length === 0) {
+        fs.closeSync(file);
+        reject(new Error('No peers available'));
+        return;
+      }
+
+      function onComplete() {
+        if (complete) return;
+        complete = true;
+        for (const s of sockets) {
+          try { s.end(); } catch (e) {}
+        }
+        try { fs.closeSync(file); } catch (e) {}
+        resolve();
+      }
+
+      peers.forEach(peer => {
+        const socket = new net.Socket();
+        sockets.add(socket);
+        socket.on('error', err => {
+          console.log(err);
+          sockets.delete(socket);
+          if (sockets.size === 0 && !complete) {
+            try { fs.closeSync(file); } catch (e) {}
+            reject(err);
+          }
+        });
+        socket.on('close', () => {
+          sockets.delete(socket);
+          if (pieces.isDone()) {
+            onComplete();
+          } else if (sockets.size === 0 && !complete) {
+            try { fs.closeSync(file); } catch (e) {}
+            reject(new Error('All peers disconnected before download complete'));
+          }
+        });
+        socket.connect(peer.port, peer.ip, () => {
+          socket.write(message.buildHandshake(torrent));
+        });
+        const queue = new Queue(torrent);
+        onWholeMsg(socket, msg => msgHandler(msg, socket, torrent, pieces, queue, file));
+      });
+    });
   });
-  const queue = new Queue(torrent);
-  onWholeMsg(socket, msg => msgHandler(msg, socket, torrent, pieces, queue, file));
 }
 
 function onWholeMsg(socket, callback) {
@@ -94,12 +130,11 @@ function pieceHandler(socket, torrent, pieces, queue, file, pieceResp) {
   pieces.addReceived(pieceResp);
 
   const offset = pieceResp.index * torrent.info['piece length'] + pieceResp.begin;
-  fs.write(file, pieceResp.block, 0, pieceResp.block.length, offset, () => {});
+  fs.writeSync(file, pieceResp.block, 0, pieceResp.block.length, offset);
 
   if (pieces.isDone()) {
     console.log('DONE!');
     socket.end();
-    try { fs.closeSync(file); } catch (e) {}
   } else {
     requestPiece(socket, torrent, pieces, queue, file);
   }
