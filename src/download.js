@@ -7,6 +7,7 @@ import * as tracker from './tracker.js';
 import * as message from './message.js';
 import Pieces from './Pieces.js';
 import Queue from './Queue.js';
+import RarityMap from './RarityMap.js';
 
 export default function download(torrent, rootPath, options = {}) {
   const {
@@ -21,7 +22,8 @@ export default function download(torrent, rootPath, options = {}) {
     const trackerController = new AbortController();
     tracker.getPeers(torrent, (peers, interval) => {
       const pieces = new Pieces(torrent);
-      const pool = new PeerPool(torrent, pieces, rootPath, {
+      const rarityMap = new RarityMap(torrent);
+      const pool = new PeerPool(torrent, pieces, rootPath, rarityMap, {
         maxConnections,
         maxRetries,
         retryDelay,
@@ -44,10 +46,11 @@ export default function download(torrent, rootPath, options = {}) {
 }
 
 class PeerPool {
-  constructor(torrent, pieces, rootPath, options) {
+  constructor(torrent, pieces, rootPath, rarityMap, options) {
     this.torrent = torrent;
     this.pieces = pieces;
     this.rootPath = rootPath;
+    this.rarityMap = rarityMap;
     this.maxConnections = options.maxConnections;
     this.maxRetries = options.maxRetries;
     this.retryDelay = options.retryDelay;
@@ -113,7 +116,7 @@ class PeerPool {
     const id = peerId(peer);
     this.retryCounts.set(id, this.retryCounts.get(id) + 1);
     const socket = new net.Socket();
-    const queue = new Queue(this.torrent);
+    const queue = new Queue(this.torrent, this.rarityMap, id);
     this.activePeers.set(id, { socket, peer, queue });
 
     socket.on('error', err => {
@@ -136,6 +139,7 @@ class PeerPool {
     const peer = this.activePeers.get(id);
     if (!peer) return;
     this.activePeers.delete(id);
+    this.rarityMap.removePeer(id);
     try { peer.socket.end(); } catch (e) {}
     this.availablePeers.push(peer.peer);
     this._scheduleRetry(id);
@@ -289,13 +293,10 @@ function pieceHandler(socket, torrent, pieces, queue, rootPath, pieceResp, onPro
 function requestPiece(socket, torrent, pieces, queue, rootPath) {
   if (queue.choked) return null;
 
-  while (queue.length()) {
-    const pieceBlock = queue.deque();
-    if (pieces.needed(pieceBlock)) {
-      socket.write(message.buildRequest(pieceBlock));
-      pieces.addRequested(pieceBlock);
-      break;
-    }
+  const pieceBlock = queue.deque(pieces);
+  if (pieceBlock) {
+    socket.write(message.buildRequest(pieceBlock));
+    pieces.addRequested(pieceBlock);
   }
 }
 
