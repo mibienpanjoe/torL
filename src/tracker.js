@@ -23,8 +23,9 @@ export function getPeers(torrent, callback) {
     } else if (respType(response) === 'announce') {
       // 4. parse announce response
       const announceResp = parseAnnounceResp(response);
-      // 5. pass peers to callback
+      // 5. pass peers to callback and close the socket
       callback(announceResp.peers);
+      socket.close();
     }
   });
 }
@@ -112,8 +113,9 @@ function parseAnnounceResp(resp) {
   return {
     action: resp.readUInt32BE(0),
     transactionId: resp.readUInt32BE(4),
-    leechers: resp.readUInt32BE(8),
-    seeders: resp.readUInt32BE(12),
+    interval: resp.readUInt32BE(8),
+    leechers: resp.readUInt32BE(12),
+    seeders: resp.readUInt32BE(16),
     peers: group(resp.slice(20), 6).map(address => {
       return {
         ip: address.slice(0, 4).join('.'),
