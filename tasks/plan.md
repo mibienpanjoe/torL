@@ -1,78 +1,85 @@
-# Implementation Plan: Phase 2A — Pause and Resume
+# Implementation Plan: Phase 3 — DHT Peer Discovery
 
 ## Overview
 
-Add the ability to pause and resume a torrent download. On exit, the client saves the completion bitfield to disk. On restart, it reads the existing files, verifies completed pieces against their SHA1 hashes, and only downloads the missing pieces.
-
-## Scope
-
-This phase implements **pause/resume only**. Phase 2B (uploading/seeding) is skipped per the user’s request.
+Add support for the BitTorrent Mainline DHT (BEP 5) so torL can discover peers without relying on a centralized tracker. This phase focuses on a minimal but functional DHT client: bootstrap and iterative `get_peers` lookup. `announce_peer` and NAT traversal are explicitly out of scope for this first pass because they are environment-dependent and require additional work.
 
 ## Architecture Decisions
 
-- **State file format.** A JSON file named `<info.name>.torl.state` next to the download target. It stores a base64-encoded bitfield and a version number.
-- **Verification on resume.** `src/verify.js` reads the existing files and hashes each piece, comparing against `torrent.info.pieces`.
-- **Pieces accepts initial state.** `src/Pieces.js` can be initialized with a pre-completed bitfield so already-verified pieces are not requested again.
-- **State is saved incrementally.** `src/download.js` writes the state file each time a piece is fully received, so crashes lose at most one piece.
-- **CLI resumes transparently.** `node index.js <torrent-file>` loads the state file if it exists.
-- **Test fixture.** A new `tests/fixtures/resume.torrent` with two pieces lets tests verify that a partially completed download skips the first piece and downloads the second.
+- **`src/dht.js` is a standalone DHT client.** It owns a UDP socket, maintains a simple routing table of known DHT nodes, and exposes `findPeers(torrent, callback)`.
+- **Simple routing table.** A fixed-size sorted list of known good nodes ordered by XOR distance to our own node ID. No full K-bucket split/merge logic in this first pass.
+- **Iterative lookups.** For each info hash, perform an iterative `find_node` / `get_peers` search, querying the closest known nodes and following closer contacts until peers are found or no closer nodes remain.
+- **Bootstrap routers.** Use well-known public DHT routers (e.g., `router.bittorrent.com:6881`, `dht.transmissionbt.com:6881`) to seed the routing table.
+- **DHT client lifecycle.** `DHTClient` is created per download, started before the lookup, and stopped once peers are returned or the download completes.
+- **Integration with `download.js`.** `download()` queries both the tracker and DHT in parallel when `useDHT` is true (the default). If the torrent has no tracker, DHT is the only peer source.
+- **Mock DHT node for tests.** A local UDP responder that answers `ping`, `find_node`, `get_peers`, and `announce_peer` so the lookup is deterministic.
 
 ## Task List
 
-### Phase 2A.1: State persistence
-- [x] Task 1: Add `src/state.js` to read/write `.torl.state` files.
-  - **Files likely touched:** `src/state.js`, `tests/state.test.js`
+### Phase 3.1: DHT primitives
+- [x] Task 1: DHT message encoding/decoding and node ID utilities
+  - **Description:** Add `src/dht.js` with functions to generate a random 20-byte node ID, encode/decode BEP 5 packets (ping, find_node, get_peers, announce_peer, and responses), and compute XOR distance between node IDs.
+  - **Files likely touched:** `src/dht.js`, `tests/dht.test.js`
   - **Acceptance criteria:**
-    - Can save a bitfield and load it back.
-    - Missing or malformed state files return an empty bitfield without failing.
-  - **Estimated scope:** Small (1–2 files)
+    - Can encode and decode each DHT message type.
+    - Transaction IDs are round-tripped correctly.
+    - Node IDs are 20 bytes.
+  - **Estimated scope:** Small–Medium (2–3 files)
 
-### Phase 2A.2: Piece verification
-- [x] Task 2: Add `src/verify.js` to hash existing files by piece.
-  - **Files likely touched:** `src/verify.js`, `tests/verify.test.js`
+### Checkpoint: DHT primitives
+- [x] `npm test` passes.
+- [x] Unit tests cover all message types.
+
+### Phase 3.2: Bootstrap and simple routing table
+- [x] Task 2: Bootstrap and routing table
+  - **Description:** Maintain a list of known DHT nodes. Send `ping` to bootstrap routers to confirm they are alive. Add responsive nodes to the routing table sorted by XOR distance to our own node ID.
+  - **Files likely touched:** `src/dht.js`, `tests/dht.test.js`
   - **Acceptance criteria:**
-    - Correctly verifies a complete single-file torrent.
-    - Correctly verifies a multi-file torrent.
-    - Detects corrupted/missing pieces and marks them as not completed.
+    - Bootstrap `ping` is sent to configured routers.
+    - Responsive nodes are stored in the routing table.
+    - Routing table stays sorted by distance.
   - **Estimated scope:** Medium (2–3 files)
 
-### Checkpoint: State and Verification
+### Phase 3.3: Iterative peer lookup
+- [x] Task 3: Iterative `get_peers` lookup
+  - **Description:** Implement iterative lookup: query the closest known nodes for `get_peers`, collect returned peers, and follow closer nodes returned in `nodes` until peers are found or the search exhausts closer candidates.
+  - **Files likely touched:** `src/dht.js`, `tests/dht.test.js`, `tests/mocks/dht.js`
+  - **Acceptance criteria:**
+    - A mock DHT network with multiple nodes can be traversed.
+    - The client returns the peer list once found.
+    - The lookup terminates when no closer nodes are found.
+  - **Estimated scope:** Medium–Large (3–5 files)
+
+### Checkpoint: Iterative lookup
 - [x] `npm test` passes.
-- [x] Unit tests cover state and verify modules.
+- [x] Mock DHT lookup test passes.
 
-### Phase 2A.3: Integrate into download
-- [x] Task 3: Wire state/verify into `download.js` and `Pieces.js`.
-  - **Files likely touched:** `src/download.js`, `src/Pieces.js`, `tests/download.test.js`
+### Phase 3.4: Integration
+- [x] Task 4: Wire DHT into `download.js`
+  - **Description:** Update `download.js` to query DHT when the torrent has no tracker or as a fallback.
+  - **Files likely touched:** `src/download.js`, `tests/download.test.js`
   - **Acceptance criteria:**
-    - `download()` loads state and verifies existing files before connecting to peers.
-    - Already-verified pieces are not requested.
-    - State file is updated incrementally as pieces complete.
-    - Resume test proves only the missing piece is downloaded.
-  - **Estimated scope:** Medium (3–4 files)
-
-### Phase 2A.4: CLI and fixture
-- [x] Task 4: Generate resume test fixture and update CLI.
-  - **Files likely touched:** `tests/fixtures/resume.torrent`, `tests/fixtures/create-resume-fixture.js`, `index.js`
-  - **Acceptance criteria:**
-    - New fixture has two pieces of known content.
-    - CLI transparently resumes via `download()`.
-  - **Estimated scope:** Small (2–3 files)
+    - A torrent without a tracker can find peers via DHT.
+    - DHT socket is closed when peers are returned.
+    - Existing tracker-based tests still pass.
+  - **Estimated scope:** Medium (2–3 files)
 
 ### Checkpoint: Complete
-- [x] All 43 tests pass.
-- [x] `AGENTS.md` updated to document pause/resume behavior.
+- [x] All 56 tests pass.
+- [x] `AGENTS.md` updated.
 - [x] Code review passes.
 
 ## Risks and Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| State file corruption leaves download stuck | Medium | Treat malformed state as empty; re-verify all pieces on resume. |
-| Verification is slow for large files | Medium | Only verify on resume; incremental completion avoids repeated verification. |
-| Multi-file piece boundary mapping is error-prone | High | Add dedicated unit tests for `verify.js` with multi-file torrents. |
-| Writing state on every piece could be slow | Low | State file is tiny; can throttle later if needed. |
+| DHT implementation is large and error-prone | High | Keep the first pass minimal: simple routing table, no K-bucket splits, focus on `get_peers`. |
+| Live DHT tests are flaky behind NAT/firewalls | High | Use a mock DHT network for all automated tests; live DHT is manual only. |
+| Integrating DHT with `download.js` complicates peer sourcing | Medium | Treat DHT as an additional peer source; keep tracker path unchanged. |
+| Bootstrapping requires internet access | Medium | Tests use local mock routers; live bootstrap is optional. |
 
 ## Open Questions
 
-- Should the state file be hidden (`.torrent-name.torl.state`) or in a `.torl` directory? (Keep it next to the download for simplicity.)
-- Should we keep a backup of the previous state file? (Not for this phase; can add later.)
+- DHT runs in parallel with the tracker lookup. Is this too aggressive for small swarms? (Current default is fine; can be disabled via `useDHT: false`.)
+- Routing table is not persisted to disk. Should we persist it for faster restarts? (Not in this phase; bootstrap each run.)
+- `announce_peer` is not implemented. Should we add it later so the client contributes to the DHT? (Yes, but out of scope for this phase.)

@@ -19,11 +19,12 @@
 ## Architecture notes
 - `src/torrent-parser.js` decodes bencoded torrent files and converts `Uint8Array` byte strings to `Buffer` for compatibility with the rest of the code.
 - `src/tracker.js` supports both UDP and HTTP trackers and accepts an optional `AbortSignal`.
-- `src/download.js` returns a `Promise`, manages peer sockets as a pool with reconnection/backoff, periodically re-announces to the tracker, and uses a global `RarityMap` for rarest-first piece selection.
+- `src/dht.js` implements a minimal BitTorrent Mainline DHT (BEP 5) client with bootstrap, iterative `get_peers` lookup, and peer discovery without trackers.
+- `src/download.js` returns a `Promise`, manages peer sockets as a pool with reconnection/backoff, periodically re-announces to the tracker, uses a global `RarityMap` for rarest-first piece selection, and falls back to DHT when no tracker is present.
 - `src/Queue.js` stores the pieces each peer has and requests the rarest needed piece first.
 - `src/RarityMap.js` tracks global piece availability across connected peers.
 - `src/state.js` and `src/verify.js` support pause/resume: a `<target>.torl.state` file stores the completed bitfield, and existing files are SHA1-verified on restart.
-- `tests/mocks/` contains a local UDP tracker and TCP peer for fast, deterministic integration tests.
+- `tests/mocks/` contains a local UDP tracker, TCP peer, and DHT node for fast, deterministic integration tests.
 
 ## Dependencies
 - `bencode` is the only runtime dependency (updated to the latest ESM-only version).

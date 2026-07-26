@@ -11,6 +11,7 @@ import download from '../src/download.js';
 import * as state from '../src/state.js';
 import { createMockTracker } from './mocks/tracker.js';
 import { createMockPeer, createFlakyPeer } from './mocks/peer.js';
+import { createMockDHTNode } from './mocks/dht.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,7 +28,7 @@ describe('download', () => {
     const destPath = path.join(tmpDir, 'test.txt');
 
     try {
-      await download(torrent, destPath);
+      await download(torrent, destPath, { useDHT: false });
       const downloaded = fs.readFileSync(destPath);
       assert.deepStrictEqual(downloaded, data);
     } finally {
@@ -51,7 +52,7 @@ describe('download', () => {
     const destPath = path.join(tmpDir, 'test');
 
     try {
-      await download(torrent, destPath);
+      await download(torrent, destPath, { useDHT: false });
       const downloaded1 = fs.readFileSync(path.join(destPath, 'a.txt'));
       const downloaded2 = fs.readFileSync(path.join(destPath, 'b.txt'));
       assert.deepStrictEqual(downloaded1, file1);
@@ -75,7 +76,7 @@ describe('download', () => {
     const destPath = path.join(tmpDir, 'test.txt');
 
     try {
-      await download(torrent, destPath, { retryDelay: 50 });
+      await download(torrent, destPath, { retryDelay: 50, useDHT: false });
       const downloaded = fs.readFileSync(destPath);
       assert.deepStrictEqual(downloaded, data);
     } finally {
@@ -97,7 +98,7 @@ describe('download', () => {
     const destPath = path.join(tmpDir, 'test.txt');
 
     try {
-      await download(torrent, destPath, { announceInterval: 50 });
+      await download(torrent, destPath, { announceInterval: 50, useDHT: false });
       const downloaded = fs.readFileSync(destPath);
       assert.deepStrictEqual(downloaded, data);
       assert.ok(tracker.getAnnounceCount() >= 2, 'expected at least one re-announce');
@@ -127,11 +128,44 @@ describe('download', () => {
     torrent.announce = Buffer.from(tracker.url);
 
     try {
-      await download(torrent, destPath, { retryDelay: 50 });
+      await download(torrent, destPath, { retryDelay: 50, useDHT: false });
       const downloaded = fs.readFileSync(destPath);
       assert.deepStrictEqual(downloaded, data);
     } finally {
       tracker.close();
+      peer.close();
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
+    }
+  });
+
+  it('downloads a torrent using DHT when no tracker is present', async () => {
+    const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'single-file.torrent'));
+    const data = Buffer.from('Hello, World!');
+    const infoHash = torrentParser.infoHash(torrent);
+
+    const peer = await createMockPeer(torrent, data);
+    const target = await createMockDHTNode({
+      peers: new Map([[infoHash.toString('hex'), [{ ip: peer.ip, port: peer.port }]]])
+    });
+    const bootstrap = await createMockDHTNode({
+      neighbors: [{ id: target.id, ip: target.ip, port: target.port }]
+    });
+
+    torrent.announce = Buffer.alloc(0);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'torl-'));
+    const destPath = path.join(tmpDir, 'test.txt');
+
+    try {
+      await download(torrent, destPath, {
+        useDHT: true,
+        dhtBootstrapNodes: [{ ip: bootstrap.ip, port: bootstrap.port }]
+      });
+      const downloaded = fs.readFileSync(destPath);
+      assert.deepStrictEqual(downloaded, data);
+    } finally {
+      bootstrap.close();
+      target.close();
       peer.close();
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
     }

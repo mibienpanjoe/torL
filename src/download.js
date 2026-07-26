@@ -10,6 +10,7 @@ import * as verify from './verify.js';
 import Pieces from './Pieces.js';
 import Queue from './Queue.js';
 import RarityMap from './RarityMap.js';
+import { DHTClient } from './dht.js';
 
 export default function download(torrent, rootPath, options = {}) {
   const {
@@ -17,12 +18,15 @@ export default function download(torrent, rootPath, options = {}) {
     maxRetries = 3,
     retryDelay = 5000,
     log = () => {},
-    announceInterval: overrideAnnounceInterval = null
+    announceInterval: overrideAnnounceInterval = null,
+    useDHT = true,
+    dhtBootstrapNodes = undefined
   } = options;
 
   return new Promise((resolve, reject) => {
     const trackerController = new AbortController();
-    tracker.getPeers(torrent, (peers, interval) => {
+
+    getPeers(torrent, useDHT, trackerController, dhtBootstrapNodes).then(({ peers, interval }) => {
       const savedBitfield = state.load(rootPath);
       const verifiedBitfield = verify.verifyPieces(torrent, rootPath, savedBitfield);
       const pieces = new Pieces(torrent, verifiedBitfield);
@@ -52,8 +56,41 @@ export default function download(torrent, rootPath, options = {}) {
           tracker.getPeers(torrent, (newPeers) => done(newPeers), trackerController.signal);
         });
       }
-    }, trackerController.signal);
+    }).catch(reject);
   });
+}
+
+async function getPeers(torrent, useDHT, trackerController, dhtBootstrapNodes) {
+  const hasTracker = torrent.announce && torrent.announce.length > 0;
+  const trackerPromise = hasTracker
+    ? new Promise((resolve) => {
+        tracker.getPeers(torrent, (peers, interval) => {
+          resolve({ peers, interval });
+        }, trackerController.signal);
+      })
+    : Promise.resolve({ peers: [], interval: null });
+
+  if (!useDHT) {
+    return trackerPromise;
+  }
+
+  const dhtClient = new DHTClient(dhtBootstrapNodes ? { bootstrapNodes: dhtBootstrapNodes } : {});
+  await dhtClient.start();
+  const dhtPeers = await new Promise((resolve) => {
+    dhtClient.findPeers(torrent, resolve);
+  });
+  dhtClient.stop();
+
+  const trackerResult = await trackerPromise;
+  const allPeers = [...trackerResult.peers];
+  const seen = new Set(allPeers.map(p => `${p.ip}:${p.port}`));
+  for (const peer of dhtPeers) {
+    if (!seen.has(`${peer.ip}:${peer.port}`)) {
+      allPeers.push(peer);
+      seen.add(`${peer.ip}:${peer.port}`);
+    }
+  }
+  return { peers: allPeers, interval: trackerResult.interval };
 }
 
 class PeerPool {
