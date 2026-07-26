@@ -4,15 +4,13 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
-    "bencode": "^2.0.3",
-    "bignum": "^0.13.1",
-    "save": "^2.9.0"
+    "bencode": "^4.0.1"
   }
 }

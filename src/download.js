@@ -1,27 +1,28 @@
 'use strict';
 
-const net = require('net');
-const tracker = require('./tracker');
-const message = require('./message');
-const Pieces = require('./Pieces');
-const Queue = require('./Queue');
+import fs from 'fs';
+import net from 'net';
+import * as tracker from './tracker.js';
+import * as message from './message.js';
+import Pieces from './Pieces.js';
+import Queue from './Queue.js';
 
-module.exports = (torrent, path) => {
+export default function download(torrent, path) {
   tracker.getPeers(torrent, peers => {
     const pieces = new Pieces(torrent);
     const file = fs.openSync(path, 'w');
-    peers.forEach(peer => download(peer, torrent, pieces, file));
+    peers.forEach(peer => downloadFromPeer(peer, torrent, pieces, file));
   });
-};
+}
 
-function download(peer, torrent, pieces) {
+function downloadFromPeer(peer, torrent, pieces, file) {
   const socket = new net.Socket();
   socket.on('error', console.log);
   socket.connect(peer.port, peer.ip, () => {
     socket.write(message.buildHandshake(torrent));
   });
- const queue = new Queue(torrent);
-  onWholeMsg(socket, msg => msgHandler(msg, socket, pieces, queue));
+  const queue = new Queue(torrent);
+  onWholeMsg(socket, msg => msgHandler(msg, socket, torrent, pieces, queue, file));
 }
 
 function onWholeMsg(socket, callback) {
@@ -41,17 +42,17 @@ function onWholeMsg(socket, callback) {
   });
 }
 
-function msgHandler(msg, socket, pieces, queue) {
+function msgHandler(msg, socket, torrent, pieces, queue, file) {
   if (isHandshake(msg)) {
     socket.write(message.buildInterested());
   } else {
     const m = message.parse(msg);
 
     if (m.id === 0) chokeHandler(socket);
-    if (m.id === 1) unchokeHandler(socket, pieces, queue);
-    if (m.id === 4) haveHandler(m.payload);
-    if (m.id === 5) bitfieldHandler(m.payload);
-    if (m.id === 7) pieceHandler(m.payload);
+    if (m.id === 1) unchokeHandler(socket, torrent, pieces, queue, file);
+    if (m.id === 4) haveHandler(socket, torrent, pieces, queue, file, m.payload);
+    if (m.id === 5) bitfieldHandler(socket, torrent, pieces, queue, file, m.payload);
+    if (m.id === 7) pieceHandler(socket, torrent, pieces, queue, file, m.payload);
   }
 }
 
@@ -64,30 +65,31 @@ function chokeHandler(socket) {
   socket.end();
 }
 
-function unchokeHandler(socket, pieces, queue) {
+function unchokeHandler(socket, torrent, pieces, queue, file) {
   queue.choked = false;
-  requestPiece(socket, pieces, queue);
+  requestPiece(socket, torrent, pieces, queue, file);
 }
 
-function haveHandler(socket, pieces, queue, payload) {
+function haveHandler(socket, torrent, pieces, queue, file, payload) {
   const pieceIndex = payload.readUInt32BE(0);
-  const queueEmpty = queue.length === 0;
+  const queueEmpty = queue.length() === 0;
   queue.queue(pieceIndex);
-  if (queueEmpty) requestPiece(socket, pieces, queue);
+  if (queueEmpty) requestPiece(socket, torrent, pieces, queue, file);
 }
 
-function bitfieldHandler(socket, pieces, queue, payload) {
-  const queueEmpty = queue.length === 0;
+function bitfieldHandler(socket, torrent, pieces, queue, file, payload) {
+  const queueEmpty = queue.length() === 0;
   payload.forEach((byte, i) => {
+    let b = byte;
     for (let j = 0; j < 8; j++) {
-      if (byte % 2) queue.queue(i * 8 + 7 - j);
-      byte = Math.floor(byte / 2);
+      if (b % 2) queue.queue(i * 8 + 7 - j);
+      b = Math.floor(b / 2);
     }
   });
-  if (queueEmpty) requestPiece(socket, pieces, queue);
+  if (queueEmpty) requestPiece(socket, torrent, pieces, queue, file);
 }
 
-function pieceHandler(socket, pieces, queue, torrent, file, pieceResp) {
+function pieceHandler(socket, torrent, pieces, queue, file, pieceResp) {
   console.log(pieceResp);
   pieces.addReceived(pieceResp);
 
@@ -97,13 +99,13 @@ function pieceHandler(socket, pieces, queue, torrent, file, pieceResp) {
   if (pieces.isDone()) {
     console.log('DONE!');
     socket.end();
-    try { fs.closeSync(file); } catch(e) {}
+    try { fs.closeSync(file); } catch (e) {}
   } else {
-    requestPiece(socket,pieces, queue);
+    requestPiece(socket, torrent, pieces, queue, file);
   }
 }
 
-function requestPiece(socket, pieces, queue) {
+function requestPiece(socket, torrent, pieces, queue, file) {
   if (queue.choked) return null;
 
   while (queue.length()) {

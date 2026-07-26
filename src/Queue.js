@@ -1,8 +1,8 @@
 'use strict';
 
-const tp = require('./torrent-parser');
+import * as tp from './torrent-parser.js';
 
-module.exports = class {
+export default class {
   constructor(torrent) {
     this._torrent = torrent;
     this._queue = [];
@@ -15,7 +15,7 @@ module.exports = class {
       const pieceBlock = {
         index: pieceIndex,
         begin: i * tp.BLOCK_LEN,
-        length: this.blockLen(this._torrent, pieceIndex, i)
+        length: tp.blockLen(this._torrent, pieceIndex, i)
       };
       this._queue.push(pieceBlock);
     }
@@ -26,4 +26,4 @@ module.exports = class {
   peek() { return this._queue[0]; }
 
   length() { return this._queue.length; }
-};
+}
