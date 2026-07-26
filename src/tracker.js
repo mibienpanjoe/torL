@@ -7,20 +7,26 @@ import bencode from 'bencode';
 import * as torrentParser from './torrent-parser.js';
 import * as util from './util.js';
 
-export function getPeers(torrent, callback) {
+export function getPeers(torrent, callback, signal) {
   const url = torrent.announce.toString('utf8');
   if (url.startsWith('udp')) {
-    udpGetPeers(torrent, callback);
+    udpGetPeers(torrent, callback, signal);
   } else {
-    httpGetPeers(torrent, callback);
+    httpGetPeers(torrent, callback, signal);
   }
 }
 
 // --- UDP tracker ---
 
-function udpGetPeers(torrent, callback) {
+function udpGetPeers(torrent, callback, signal) {
   const socket = dgram.createSocket('udp4');
   const url = torrent.announce.toString('utf8');
+
+  if (signal) {
+    signal.addEventListener('abort', () => {
+      try { socket.close(); } catch (e) {}
+    }, { once: true });
+  }
 
   // 1. send connect request
   udpSend(socket, buildConnReq(), url);
@@ -139,7 +145,7 @@ function parseAnnounceResp(resp) {
 
 // --- HTTP tracker ---
 
-async function httpGetPeers(torrent, callback) {
+async function httpGetPeers(torrent, callback, signal) {
   const announceUrl = torrent.announce.toString('utf8');
   const infoHash = torrentParser.infoHash(torrent);
   const peerId = util.genId();
@@ -149,7 +155,7 @@ async function httpGetPeers(torrent, callback) {
 
   const url = buildHttpUrl(announceUrl, infoHash, peerId, left);
 
-  const response = await fetch(url);
+  const response = await fetch(url, { signal });
   const arrayBuffer = await response.arrayBuffer();
   const decoded = bencode.decode(Buffer.from(arrayBuffer));
 

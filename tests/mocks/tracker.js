@@ -5,7 +5,9 @@ import { Buffer } from 'buffer';
 
 const CONNECTION_ID = Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
 
-export function createMockTracker(port = 0, peers = []) {
+export function createMockTracker(port = 0, peers = [], options = {}) {
+  const interval = options.interval ?? 60;
+  let announceCount = 0;
   const socket = dgram.createSocket('udp4');
 
   socket.on('message', (msg, rinfo) => {
@@ -22,10 +24,11 @@ export function createMockTracker(port = 0, peers = []) {
     }
 
     if (action === 1) {
+      announceCount++;
       const response = Buffer.alloc(20 + peers.length * 6);
       response.writeUInt32BE(1, 0);
       response.writeUInt32BE(transactionId, 4);
-      response.writeUInt32BE(60, 8); // interval
+      response.writeUInt32BE(interval, 8);
       response.writeUInt32BE(0, 12); // leechers
       response.writeUInt32BE(peers.length, 16); // seeders
       peers.forEach((peer, i) => {
@@ -47,6 +50,7 @@ export function createMockTracker(port = 0, peers = []) {
       resolve({
         url: `udp://127.0.0.1:${address.port}`,
         port: address.port,
+        getAnnounceCount: () => announceCount,
         close: () => {
           if (!closed) {
             closed = true;

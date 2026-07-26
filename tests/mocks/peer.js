@@ -5,7 +5,8 @@ import { Buffer } from 'buffer';
 import * as message from '../../src/message.js';
 import * as torrentParser from '../../src/torrent-parser.js';
 
-export function createMockPeer(torrent, data, port = 0) {
+export function createMockPeer(torrent, data, options = {}) {
+  const { port = 0, delayMs = 0 } = options;
   const server = net.createServer(socket => {
     let receivedHandshake = false;
     let savedBuf = Buffer.alloc(0);
@@ -30,13 +31,14 @@ export function createMockPeer(torrent, data, port = 0) {
               msg.slice(28, 48).equals(infoHash)) {
             receivedHandshake = true;
             socket.write(message.buildHandshake(torrent));
-            // Advertise that we have all pieces via a bitfield.
             const nPieces = torrent.info.pieces.length / 20;
             const bitfield = Buffer.alloc(Math.ceil(nPieces / 8));
             for (let p = 0; p < nPieces; p++) {
               bitfield[Math.floor(p / 8)] |= 0x80 >> (p % 8);
             }
-            socket.write(message.buildBitfield(bitfield));
+            setTimeout(() => {
+              socket.write(message.buildBitfield(bitfield));
+            }, delayMs);
           } else {
             socket.end();
             return;
@@ -44,7 +46,7 @@ export function createMockPeer(torrent, data, port = 0) {
         } else {
           const m = message.parse(msg);
           if (m.id === 2) {
-            socket.write(message.buildUnchoke());
+            setTimeout(() => socket.write(message.buildUnchoke()), delayMs);
           } else if (m.id === 6) {
             const offset = m.payload.index * torrent.info['piece length'] + m.payload.begin;
             const block = data.slice(offset, offset + m.payload.length);

@@ -83,4 +83,27 @@ describe('download', () => {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
     }
   });
+
+  it('re-announces to the tracker and refreshes the peer list', async () => {
+    const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'single-file.torrent'));
+    const data = Buffer.from('Hello, World!');
+
+    const peer = await createMockPeer(torrent, data, { delayMs: 100 });
+    const tracker = await createMockTracker(0, [{ ip: peer.ip, port: peer.port }]);
+    torrent.announce = Buffer.from(tracker.url);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'torl-'));
+    const destPath = path.join(tmpDir, 'test.txt');
+
+    try {
+      await download(torrent, destPath, { announceInterval: 50 });
+      const downloaded = fs.readFileSync(destPath);
+      assert.deepStrictEqual(downloaded, data);
+      assert.ok(tracker.getAnnounceCount() >= 2, 'expected at least one re-announce');
+    } finally {
+      tracker.close();
+      peer.close();
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
+    }
+  });
 });

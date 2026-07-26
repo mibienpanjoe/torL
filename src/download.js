@@ -13,10 +13,12 @@ export default function download(torrent, rootPath, options = {}) {
     maxConnections = 10,
     maxRetries = 3,
     retryDelay = 5000,
-    log = () => {}
+    log = () => {},
+    announceInterval: overrideAnnounceInterval = null
   } = options;
 
   return new Promise((resolve, reject) => {
+    const trackerController = new AbortController();
     tracker.getPeers(torrent, (peers, interval) => {
       const pieces = new Pieces(torrent);
       const pool = new PeerPool(torrent, pieces, rootPath, {
@@ -25,11 +27,19 @@ export default function download(torrent, rootPath, options = {}) {
         retryDelay,
         log,
         onComplete: resolve,
-        onError: reject
+        onError: reject,
+        trackerController
       });
       pool.addPeers(peers);
       pool.start();
-    });
+
+      const ms = overrideAnnounceInterval !== null ? overrideAnnounceInterval : (interval && interval > 0 ? interval * 1000 : 0);
+      if (ms > 0) {
+        pool.scheduleAnnounce(ms, (done) => {
+          tracker.getPeers(torrent, (newPeers) => done(newPeers), trackerController.signal);
+        });
+      }
+    }, trackerController.signal);
   });
 }
 
@@ -44,19 +54,39 @@ class PeerPool {
     this.log = options.log;
     this.onComplete = options.onComplete;
     this.onError = options.onError;
+    this.trackerController = options.trackerController;
 
     this.availablePeers = [];
     this.activePeers = new Map();
     this.retryCounts = new Map();
     this.retryTimer = null;
     this.complete = false;
+    this.announceTimeout = null;
+  }
+
+  scheduleAnnounce(ms, fetchPeers) {
+    if (this.complete || this.announceTimeout) return;
+    this.announceTimeout = setTimeout(() => {
+      this.announceTimeout = null;
+      if (this.complete) return;
+      fetchPeers(newPeers => {
+        if (this.complete) return;
+        this.addPeers(newPeers);
+        this.start();
+        this.scheduleAnnounce(ms, fetchPeers);
+      });
+    }, ms);
   }
 
   addPeers(peers) {
+    const activeIds = new Set(this.activePeers.keys());
+    const availableIds = new Set(this.availablePeers.map(peerId));
     for (const peer of peers) {
       const id = peerId(peer);
+      if (activeIds.has(id) || availableIds.has(id)) continue;
       this.retryCounts.set(id, this.retryCounts.get(id) || 0);
       this.availablePeers.push(peer);
+      availableIds.add(id);
     }
   }
 
@@ -138,6 +168,13 @@ class PeerPool {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+    if (this.announceTimeout) {
+      clearTimeout(this.announceTimeout);
+      this.announceTimeout = null;
+    }
+    if (this.trackerController) {
+      this.trackerController.abort();
+    }
     for (const { socket } of this.activePeers.values()) {
       try { socket.end(); } catch (e) {}
     }
@@ -151,6 +188,13 @@ class PeerPool {
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
+    }
+    if (this.announceTimeout) {
+      clearTimeout(this.announceTimeout);
+      this.announceTimeout = null;
+    }
+    if (this.trackerController) {
+      this.trackerController.abort();
     }
     for (const { socket } of this.activePeers.values()) {
       try { socket.end(); } catch (e) {}
