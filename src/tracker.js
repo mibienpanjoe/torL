@@ -3,10 +3,22 @@
 import dgram from 'dgram';
 import { Buffer } from 'buffer';
 import crypto from 'crypto';
+import bencode from 'bencode';
 import * as torrentParser from './torrent-parser.js';
 import * as util from './util.js';
 
 export function getPeers(torrent, callback) {
+  const url = torrent.announce.toString('utf8');
+  if (url.startsWith('udp')) {
+    udpGetPeers(torrent, callback);
+  } else {
+    httpGetPeers(torrent, callback);
+  }
+}
+
+// --- UDP tracker ---
+
+function udpGetPeers(torrent, callback) {
   const socket = dgram.createSocket('udp4');
   const url = torrent.announce.toString('utf8');
 
@@ -123,4 +135,54 @@ function parseAnnounceResp(resp) {
       };
     })
   };
+}
+
+// --- HTTP tracker ---
+
+async function httpGetPeers(torrent, callback) {
+  const announceUrl = torrent.announce.toString('utf8');
+  const infoHash = torrentParser.infoHash(torrent);
+  const peerId = util.genId();
+  const left = torrent.info.files
+    ? torrent.info.files.reduce((sum, f) => sum + f.length, 0)
+    : torrent.info.length;
+
+  const url = buildHttpUrl(announceUrl, infoHash, peerId, left);
+
+  const response = await fetch(url);
+  const arrayBuffer = await response.arrayBuffer();
+  const decoded = bencode.decode(Buffer.from(arrayBuffer));
+
+  if (decoded['failure reason']) {
+    throw new Error(decoded['failure reason'].toString('utf8'));
+  }
+
+  const peers = Buffer.from(decoded.peers);
+  const peerList = [];
+  for (let i = 0; i < peers.length; i += 6) {
+    peerList.push({
+      ip: peers.slice(i, i + 4).join('.'),
+      port: peers.readUInt16BE(i + 4)
+    });
+  }
+
+  callback(peerList);
+}
+
+function buildHttpUrl(announceUrl, infoHash, peerId, left) {
+  const params = [
+    'info_hash=' + urlEncodeBuffer(infoHash),
+    'peer_id=' + urlEncodeBuffer(peerId),
+    'port=6881',
+    'uploaded=0',
+    'downloaded=0',
+    'left=' + left,
+    'compact=1',
+    'event=started'
+  ].join('&');
+  return announceUrl + (announceUrl.includes('?') ? '&' : '?') + params;
+}
+
+function urlEncodeBuffer(buf) {
+  return Array.from(buf).map(b => `%${b.toString(16).padStart(2, '0')}`).join('');
 }

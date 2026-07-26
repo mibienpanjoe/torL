@@ -1,22 +1,21 @@
 'use strict';
 
 import fs from 'fs';
+import path from 'path';
 import net from 'net';
 import * as tracker from './tracker.js';
 import * as message from './message.js';
 import Pieces from './Pieces.js';
 import Queue from './Queue.js';
 
-export default function download(torrent, path) {
+export default function download(torrent, rootPath) {
   return new Promise((resolve, reject) => {
     tracker.getPeers(torrent, peers => {
       const pieces = new Pieces(torrent);
-      const file = fs.openSync(path, 'w');
       const sockets = new Set();
       let complete = false;
 
       if (peers.length === 0) {
-        fs.closeSync(file);
         reject(new Error('No peers available'));
         return;
       }
@@ -27,7 +26,6 @@ export default function download(torrent, path) {
         for (const s of sockets) {
           try { s.end(); } catch (e) {}
         }
-        try { fs.closeSync(file); } catch (e) {}
         resolve();
       }
 
@@ -38,7 +36,6 @@ export default function download(torrent, path) {
           console.log(err);
           sockets.delete(socket);
           if (sockets.size === 0 && !complete) {
-            try { fs.closeSync(file); } catch (e) {}
             reject(err);
           }
         });
@@ -47,7 +44,6 @@ export default function download(torrent, path) {
           if (pieces.isDone()) {
             onComplete();
           } else if (sockets.size === 0 && !complete) {
-            try { fs.closeSync(file); } catch (e) {}
             reject(new Error('All peers disconnected before download complete'));
           }
         });
@@ -55,7 +51,7 @@ export default function download(torrent, path) {
           socket.write(message.buildHandshake(torrent));
         });
         const queue = new Queue(torrent);
-        onWholeMsg(socket, msg => msgHandler(msg, socket, torrent, pieces, queue, file));
+        onWholeMsg(socket, msg => msgHandler(msg, socket, torrent, pieces, queue, rootPath));
       });
     });
   });
@@ -78,17 +74,17 @@ function onWholeMsg(socket, callback) {
   });
 }
 
-function msgHandler(msg, socket, torrent, pieces, queue, file) {
+function msgHandler(msg, socket, torrent, pieces, queue, rootPath) {
   if (isHandshake(msg)) {
     socket.write(message.buildInterested());
   } else {
     const m = message.parse(msg);
 
     if (m.id === 0) chokeHandler(socket);
-    if (m.id === 1) unchokeHandler(socket, torrent, pieces, queue, file);
-    if (m.id === 4) haveHandler(socket, torrent, pieces, queue, file, m.payload);
-    if (m.id === 5) bitfieldHandler(socket, torrent, pieces, queue, file, m.payload);
-    if (m.id === 7) pieceHandler(socket, torrent, pieces, queue, file, m.payload);
+    if (m.id === 1) unchokeHandler(socket, torrent, pieces, queue, rootPath);
+    if (m.id === 4) haveHandler(socket, torrent, pieces, queue, rootPath, m.payload);
+    if (m.id === 5) bitfieldHandler(socket, torrent, pieces, queue, rootPath, m.payload);
+    if (m.id === 7) pieceHandler(socket, torrent, pieces, queue, rootPath, m.payload);
   }
 }
 
@@ -101,19 +97,19 @@ function chokeHandler(socket) {
   socket.end();
 }
 
-function unchokeHandler(socket, torrent, pieces, queue, file) {
+function unchokeHandler(socket, torrent, pieces, queue, rootPath) {
   queue.choked = false;
-  requestPiece(socket, torrent, pieces, queue, file);
+  requestPiece(socket, torrent, pieces, queue, rootPath);
 }
 
-function haveHandler(socket, torrent, pieces, queue, file, payload) {
+function haveHandler(socket, torrent, pieces, queue, rootPath, payload) {
   const pieceIndex = payload.readUInt32BE(0);
   const queueEmpty = queue.length() === 0;
   queue.queue(pieceIndex);
-  if (queueEmpty) requestPiece(socket, torrent, pieces, queue, file);
+  if (queueEmpty) requestPiece(socket, torrent, pieces, queue, rootPath);
 }
 
-function bitfieldHandler(socket, torrent, pieces, queue, file, payload) {
+function bitfieldHandler(socket, torrent, pieces, queue, rootPath, payload) {
   const queueEmpty = queue.length() === 0;
   payload.forEach((byte, i) => {
     let b = byte;
@@ -122,25 +118,25 @@ function bitfieldHandler(socket, torrent, pieces, queue, file, payload) {
       b = Math.floor(b / 2);
     }
   });
-  if (queueEmpty) requestPiece(socket, torrent, pieces, queue, file);
+  if (queueEmpty) requestPiece(socket, torrent, pieces, queue, rootPath);
 }
 
-function pieceHandler(socket, torrent, pieces, queue, file, pieceResp) {
+function pieceHandler(socket, torrent, pieces, queue, rootPath, pieceResp) {
   console.log(pieceResp);
   pieces.addReceived(pieceResp);
 
   const offset = pieceResp.index * torrent.info['piece length'] + pieceResp.begin;
-  fs.writeSync(file, pieceResp.block, 0, pieceResp.block.length, offset);
+  writeBlock(torrent, rootPath, pieceResp.block, offset);
 
   if (pieces.isDone()) {
     console.log('DONE!');
     socket.end();
   } else {
-    requestPiece(socket, torrent, pieces, queue, file);
+    requestPiece(socket, torrent, pieces, queue, rootPath);
   }
 }
 
-function requestPiece(socket, torrent, pieces, queue, file) {
+function requestPiece(socket, torrent, pieces, queue, rootPath) {
   if (queue.choked) return null;
 
   while (queue.length()) {
@@ -150,5 +146,43 @@ function requestPiece(socket, torrent, pieces, queue, file) {
       pieces.addRequested(pieceBlock);
       break;
     }
+  }
+}
+
+function writeBlock(torrent, rootPath, block, offset) {
+  const files = torrent.info.files
+    ? torrent.info.files.map(f => ({
+      length: f.length,
+      path: path.join(rootPath, ...f.path.map(p => p.toString('utf8')))
+    }))
+    : [{
+      length: torrent.info.length,
+      path: rootPath
+    }];
+
+  let fileOffset = 0;
+  for (const file of files) {
+    const fileStart = fileOffset;
+    const fileEnd = fileOffset + file.length;
+    const blockStart = offset;
+    const blockEnd = offset + block.length;
+
+    if (blockEnd <= fileStart || blockStart >= fileEnd) {
+      fileOffset += file.length;
+      continue;
+    }
+
+    const overlapStart = Math.max(blockStart, fileStart);
+    const overlapEnd = Math.min(blockEnd, fileEnd);
+    const blockSliceStart = overlapStart - blockStart;
+    const sliceLength = overlapEnd - overlapStart;
+    const fileWriteOffset = overlapStart - fileStart;
+
+    fs.mkdirSync(path.dirname(file.path), { recursive: true });
+    const fd = fs.openSync(file.path, 'w');
+    fs.writeSync(fd, block, blockSliceStart, sliceLength, fileWriteOffset);
+    fs.closeSync(fd);
+
+    fileOffset += file.length;
   }
 }

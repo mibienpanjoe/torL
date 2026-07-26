@@ -35,4 +35,30 @@ describe('download', () => {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
     }
   });
+
+  it('downloads a multi-file torrent from mock tracker and peer', async () => {
+    const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'multi-file.torrent'));
+    const file1 = Buffer.from('Hello');
+    const file2 = Buffer.from(' World!');
+    const data = Buffer.concat([file1, file2]);
+
+    const peer = await createMockPeer(torrent, data);
+    const tracker = await createMockTracker(0, [{ ip: peer.ip, port: peer.port }]);
+    torrent.announce = Buffer.from(tracker.url);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'torl-'));
+    const destPath = path.join(tmpDir, 'test');
+
+    try {
+      await download(torrent, destPath);
+      const downloaded1 = fs.readFileSync(path.join(destPath, 'a.txt'));
+      const downloaded2 = fs.readFileSync(path.join(destPath, 'b.txt'));
+      assert.deepStrictEqual(downloaded1, file1);
+      assert.deepStrictEqual(downloaded2, file2);
+    } finally {
+      tracker.close();
+      peer.close();
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
+    }
+  });
 });
