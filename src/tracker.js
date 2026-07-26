@@ -35,8 +35,8 @@ function udpGetPeers(torrent, callback) {
     } else if (respType(response) === 'announce') {
       // 4. parse announce response
       const announceResp = parseAnnounceResp(response);
-      // 5. pass peers to callback and close the socket
-      callback(announceResp.peers);
+      // 5. pass peers and interval to callback and close the socket
+      callback(announceResp.peers, announceResp.interval);
       socket.close();
     }
   });
@@ -166,7 +166,8 @@ async function httpGetPeers(torrent, callback) {
     });
   }
 
-  callback(peerList);
+  const interval = typeof decoded.interval === 'number' ? decoded.interval : 60;
+  callback(peerList, interval);
 }
 
 function buildHttpUrl(announceUrl, infoHash, peerId, left) {

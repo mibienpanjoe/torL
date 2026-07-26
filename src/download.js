@@ -8,53 +8,176 @@ import * as message from './message.js';
 import Pieces from './Pieces.js';
 import Queue from './Queue.js';
 
-export default function download(torrent, rootPath) {
+export default function download(torrent, rootPath, options = {}) {
+  const {
+    maxConnections = 10,
+    maxRetries = 3,
+    retryDelay = 5000,
+    log = () => {}
+  } = options;
+
   return new Promise((resolve, reject) => {
-    tracker.getPeers(torrent, peers => {
+    tracker.getPeers(torrent, (peers, interval) => {
       const pieces = new Pieces(torrent);
-      const sockets = new Set();
-      let complete = false;
-
-      if (peers.length === 0) {
-        reject(new Error('No peers available'));
-        return;
-      }
-
-      function onComplete() {
-        if (complete) return;
-        complete = true;
-        for (const s of sockets) {
-          try { s.end(); } catch (e) {}
-        }
-        resolve();
-      }
-
-      peers.forEach(peer => {
-        const socket = new net.Socket();
-        sockets.add(socket);
-        socket.on('error', err => {
-          console.log(err);
-          sockets.delete(socket);
-          if (sockets.size === 0 && !complete) {
-            reject(err);
-          }
-        });
-        socket.on('close', () => {
-          sockets.delete(socket);
-          if (pieces.isDone()) {
-            onComplete();
-          } else if (sockets.size === 0 && !complete) {
-            reject(new Error('All peers disconnected before download complete'));
-          }
-        });
-        socket.connect(peer.port, peer.ip, () => {
-          socket.write(message.buildHandshake(torrent));
-        });
-        const queue = new Queue(torrent);
-        onWholeMsg(socket, msg => msgHandler(msg, socket, torrent, pieces, queue, rootPath));
+      const pool = new PeerPool(torrent, pieces, rootPath, {
+        maxConnections,
+        maxRetries,
+        retryDelay,
+        log,
+        onComplete: resolve,
+        onError: reject
       });
+      pool.addPeers(peers);
+      pool.start();
     });
   });
+}
+
+class PeerPool {
+  constructor(torrent, pieces, rootPath, options) {
+    this.torrent = torrent;
+    this.pieces = pieces;
+    this.rootPath = rootPath;
+    this.maxConnections = options.maxConnections;
+    this.maxRetries = options.maxRetries;
+    this.retryDelay = options.retryDelay;
+    this.log = options.log;
+    this.onComplete = options.onComplete;
+    this.onError = options.onError;
+
+    this.availablePeers = [];
+    this.activePeers = new Map();
+    this.retryCounts = new Map();
+    this.retryTimer = null;
+    this.complete = false;
+  }
+
+  addPeers(peers) {
+    for (const peer of peers) {
+      const id = peerId(peer);
+      this.retryCounts.set(id, this.retryCounts.get(id) || 0);
+      this.availablePeers.push(peer);
+    }
+  }
+
+  start() {
+    this._tryConnect();
+  }
+
+  _tryConnect() {
+    if (this.complete) return;
+    while (this.activePeers.size < this.maxConnections && this.availablePeers.length > 0) {
+      const peer = this.availablePeers.shift();
+      const id = peerId(peer);
+      const retries = this.retryCounts.get(id);
+      if (retries >= this.maxRetries) {
+        this.log(`skipping peer ${id} after ${retries} retries`);
+        continue;
+      }
+      this._connectPeer(peer);
+    }
+    this._checkProgress();
+  }
+
+  _connectPeer(peer) {
+    const id = peerId(peer);
+    this.retryCounts.set(id, this.retryCounts.get(id) + 1);
+    const socket = new net.Socket();
+    const queue = new Queue(this.torrent);
+    this.activePeers.set(id, { socket, peer, queue });
+
+    socket.on('error', err => {
+      this.log(`peer ${id} error: ${err.message}`);
+      this._handleDisconnect(id);
+    });
+
+    socket.on('close', () => {
+      this._handleDisconnect(id);
+    });
+
+    socket.connect(peer.port, peer.ip, () => {
+      socket.write(message.buildHandshake(this.torrent));
+    });
+
+    onWholeMsg(socket, msg => this._msgHandler(msg, id));
+  }
+
+  _handleDisconnect(id) {
+    const peer = this.activePeers.get(id);
+    if (!peer) return;
+    this.activePeers.delete(id);
+    try { peer.socket.end(); } catch (e) {}
+    this.availablePeers.push(peer.peer);
+    this._scheduleRetry(id);
+    this._checkProgress();
+  }
+
+  _scheduleRetry(id) {
+    if (this.retryTimer) return;
+    const retries = this.retryCounts.get(id) || 0;
+    const delay = Math.min(this.retryDelay * Math.pow(2, Math.max(0, retries - 1)), 30000);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this._tryConnect();
+    }, delay);
+  }
+
+  _checkProgress() {
+    if (this.complete) return;
+    if (this.pieces.isDone()) {
+      this._finish();
+    } else if (this.activePeers.size === 0 && this.availablePeers.length === 0) {
+      this._fail(new Error('All peers disconnected before download complete'));
+    }
+  }
+
+  _finish() {
+    if (this.complete) return;
+    this.complete = true;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    for (const { socket } of this.activePeers.values()) {
+      try { socket.end(); } catch (e) {}
+    }
+    this.activePeers.clear();
+    this.onComplete();
+  }
+
+  _fail(err) {
+    if (this.complete) return;
+    this.complete = true;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    for (const { socket } of this.activePeers.values()) {
+      try { socket.end(); } catch (e) {}
+    }
+    this.activePeers.clear();
+    this.onError(err);
+  }
+
+  _msgHandler(msg, id) {
+    const peer = this.activePeers.get(id);
+    if (!peer) return;
+    const { socket, queue } = peer;
+    if (isHandshake(msg)) {
+      socket.write(message.buildInterested());
+    } else {
+      const m = message.parse(msg);
+      if (m.id === 0) chokeHandler(socket);
+      if (m.id === 1) unchokeHandler(socket, this.torrent, this.pieces, queue, this.rootPath);
+      if (m.id === 4) haveHandler(socket, this.torrent, this.pieces, queue, this.rootPath, m.payload);
+      if (m.id === 5) bitfieldHandler(socket, this.torrent, this.pieces, queue, this.rootPath, m.payload);
+      if (m.id === 7) pieceHandler(socket, this.torrent, this.pieces, queue, this.rootPath, m.payload, this._checkProgress.bind(this));
+    }
+  }
+}
+
+function peerId(peer) {
+  return `${peer.ip}:${peer.port}`;
 }
 
 function onWholeMsg(socket, callback) {
@@ -62,7 +185,6 @@ function onWholeMsg(socket, callback) {
   let handshake = true;
 
   socket.on('data', recvBuf => {
-    // msgLen calculates the length of a whole message
     const msgLen = () => handshake ? savedBuf.readUInt8(0) + 49 : savedBuf.readInt32BE(0) + 4;
     savedBuf = Buffer.concat([savedBuf, recvBuf]);
 
@@ -72,20 +194,6 @@ function onWholeMsg(socket, callback) {
       handshake = false;
     }
   });
-}
-
-function msgHandler(msg, socket, torrent, pieces, queue, rootPath) {
-  if (isHandshake(msg)) {
-    socket.write(message.buildInterested());
-  } else {
-    const m = message.parse(msg);
-
-    if (m.id === 0) chokeHandler(socket);
-    if (m.id === 1) unchokeHandler(socket, torrent, pieces, queue, rootPath);
-    if (m.id === 4) haveHandler(socket, torrent, pieces, queue, rootPath, m.payload);
-    if (m.id === 5) bitfieldHandler(socket, torrent, pieces, queue, rootPath, m.payload);
-    if (m.id === 7) pieceHandler(socket, torrent, pieces, queue, rootPath, m.payload);
-  }
 }
 
 function isHandshake(msg) {
@@ -121,16 +229,14 @@ function bitfieldHandler(socket, torrent, pieces, queue, rootPath, payload) {
   if (queueEmpty) requestPiece(socket, torrent, pieces, queue, rootPath);
 }
 
-function pieceHandler(socket, torrent, pieces, queue, rootPath, pieceResp) {
-  console.log(pieceResp);
+function pieceHandler(socket, torrent, pieces, queue, rootPath, pieceResp, onProgress = () => {}) {
   pieces.addReceived(pieceResp);
 
   const offset = pieceResp.index * torrent.info['piece length'] + pieceResp.begin;
   writeBlock(torrent, rootPath, pieceResp.block, offset);
 
   if (pieces.isDone()) {
-    console.log('DONE!');
-    socket.end();
+    onProgress();
   } else {
     requestPiece(socket, torrent, pieces, queue, rootPath);
   }

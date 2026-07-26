@@ -1,34 +1,39 @@
-# torL Functional Phase — Todo
+# torL Phase 1 — Production Readiness
 
-## Phase 1: Foundation
-- [x] Task 1: Update dependencies and replace `bignum` with `BigInt`
-- [x] Task 2: Set up test infrastructure
-- [x] Task 3: Fix core module bugs
+## Phase 1: Reconnection and Peer Pool
+- [ ] Task 1: Reconnect dropped connections
+  - Refactor `src/download.js` to manage peer sockets as a pool.
+  - Retry failed connections up to `maxRetries` with exponential backoff.
+  - Keep a minimum number of active connections.
+  - Do not reject the whole download when one peer fails.
 
-## Checkpoint: Foundation
-- [x] `npm test` runs and all foundation tests pass.
-- [x] No native build dependencies remain.
-- [x] `torrent-parser.js` unit tests pass.
+## Checkpoint: Reconnection
+- [ ] `npm test` passes.
+- [ ] Single-peer download test still works.
 
-## Phase 2: Core peer/tracker
-- [x] Task 4: Build mock UDP tracker
-- [x] Task 5: Build mock peer
+## Phase 2: Periodic Re-Announcement
+- [ ] Task 2: Periodic peer re-announcement
+  - Update `src/tracker.js` to return `{ peers, interval }`.
+  - Schedule re-announcement in `src/download.js`.
+  - Clear timers on completion.
+  - Update tests/mocks to support configurable intervals.
 
-## Checkpoint: Core peer/tracker
-- [x] Mock tracker responds to connect + announce requests.
-- [x] Mock peer completes handshake + serves a piece.
-- [x] Unit tests pass without network.
+## Checkpoint: Re-Announcement
+- [ ] `npm test` passes.
+- [ ] Tracker test verifies interval.
+- [ ] No dangling timers.
 
-## Phase 3: Integration
-- [x] Task 6: Fix `download.js` and wire it to mocks
-- [x] Task 7: Real torrent integration test
-- [x] Task 8: Update `AGENTS.md`
+## Phase 3: Rarest-First Piece Selection
+- [ ] Task 3: Rarest-first piece selection
+  - Add `src/RarityMap.js` to track global piece availability.
+  - Update `src/Queue.js` to order pieces by rarity.
+  - Update `src/download.js` to feed bitfield/have/disconnect into `RarityMap`.
+  - Add unit tests for `RarityMap` and rarity-aware `Queue`.
 
 ## Checkpoint: Complete
-- [x] Mock end-to-end download works.
-- [x] Live HTTP tracker connectivity verified against Debian netinst torrent.
-- [x] All tests pass.
+- [ ] All 27+ tests pass.
+- [ ] `AGENTS.md` updated.
 
-## Task details
+## Plan
 
-See `tasks/plan.md` for full descriptions, risks, and architecture decisions.
+See `tasks/plan.md` for full architecture decisions, acceptance criteria, and risks.

@@ -17,10 +17,13 @@ describe('tracker', () => {
     torrent.announce = Buffer.from(mockTracker.url);
 
     try {
-      const peers = await new Promise((resolve, reject) => {
-        tracker.getPeers(torrent, resolve);
+      const { peers, interval } = await new Promise((resolve, reject) => {
+        tracker.getPeers(torrent, (peers, interval) => {
+          resolve({ peers, interval });
+        });
       });
       assert.strictEqual(peers.length, 1);
+      assert.strictEqual(interval, 60);
       assert.strictEqual(peers[0].ip, '127.0.0.1');
       assert.strictEqual(peers[0].port, 6881);
     } finally {
