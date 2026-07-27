@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -62,6 +62,9 @@ export async function downloadBinary(url, dest) {
     writeFileSync(tempPath, buffer);
 
     renameSync(tempPath, dest);
+    if (process.platform !== 'win32') {
+      chmodSync(dest, 0o755);
+    }
     return 0;
   } catch (err) {
     console.error(err.message);
