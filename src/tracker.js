@@ -95,7 +95,8 @@ function buildAnnounceReq(connId, torrent, port = 6881) {
   // transaction id
   crypto.randomBytes(4).copy(buf, 12);
   // info hash
-  torrentParser.infoHash(torrent).copy(buf, 16);
+  const infoHash = torrent.infoHash || torrentParser.infoHash(torrent);
+  infoHash.copy(buf, 16);
   // peerId
   util.genId().copy(buf, 36);
   // downloaded
@@ -147,11 +148,11 @@ function parseAnnounceResp(resp) {
 
 async function httpGetPeers(torrent, callback, signal) {
   const announceUrl = torrent.announce.toString('utf8');
-  const infoHash = torrentParser.infoHash(torrent);
+  const infoHash = torrent.infoHash || torrentParser.infoHash(torrent);
   const peerId = util.genId();
   const left = torrent.info.files
     ? torrent.info.files.reduce((sum, f) => sum + f.length, 0)
-    : torrent.info.length;
+    : (torrent.info.length || 0);
 
   const url = buildHttpUrl(announceUrl, infoHash, peerId, left);
 

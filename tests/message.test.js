@@ -58,4 +58,43 @@ describe('message', () => {
     assert.strictEqual(msg.readUInt8(4), 5);
     assert.deepStrictEqual(msg.slice(5), bitfield);
   });
+
+  it('sets the extension protocol bit in the handshake', () => {
+    const torrent = { info: { pieces: INFO_HASH } };
+    const handshake = message.buildHandshake(torrent);
+    assert.strictEqual(handshake.readUInt8(20), 0x10);
+  });
+
+  it('builds and parses an extended handshake', () => {
+    const ext = message.buildExtHandshake(1234, 6881);
+    const parsed = message.parse(ext);
+    assert.strictEqual(parsed.id, 20);
+    assert.strictEqual(parsed.extId, 0);
+    const handshake = message.parseExtHandshake(ext);
+    assert.strictEqual(handshake.utMetadata, 1);
+    assert.strictEqual(handshake.metadataSize, 1234);
+    assert.strictEqual(handshake.listenPort, 6881);
+  });
+
+  it('builds and parses a metadata request', () => {
+    const request = message.buildMetadataRequest(2);
+    const parsed = message.parse(request);
+    assert.strictEqual(parsed.id, 20);
+    assert.strictEqual(parsed.extId, 1);
+    const meta = message.parseMetadataMessage(request);
+    assert.strictEqual(meta.msgType, 0);
+    assert.strictEqual(meta.piece, 2);
+  });
+
+  it('builds and parses a metadata data message', () => {
+    const metadata = Buffer.from('bencoded info dictionary');
+    const data = message.buildMetadataData(0, metadata);
+    const parsed = message.parse(data);
+    assert.strictEqual(parsed.id, 20);
+    const meta = message.parseMetadataMessage(data);
+    assert.strictEqual(meta.msgType, 1);
+    assert.strictEqual(meta.piece, 0);
+    assert.strictEqual(meta.totalSize, metadata.length);
+    assert.deepStrictEqual(meta.data, metadata);
+  });
 });
