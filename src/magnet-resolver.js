@@ -43,7 +43,8 @@ function buildTorrentStub(magnet) {
   return {
     info: { length: magnet.length || 0 },
     infoHash: magnet.infoHash,
-    announce: announce ? Buffer.from(announce) : null
+    announce: announce ? Buffer.from(announce) : null,
+    'announce-list': magnet.trackers.length ? magnet.trackers.map(t => [Buffer.from(t)]) : []
   };
 }
 
