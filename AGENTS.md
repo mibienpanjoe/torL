@@ -9,8 +9,9 @@
 ## Developer commands
 - `npm test` runs the full test suite using the built-in `node:test` runner.
 - `npm test -- tests/<file>.test.js` runs a single test file.
-- `npm run build-tui` builds the Go TUI binary; `npm install` runs it automatically when Go is present.
-- `npm install` is plain JS dependencies; Go is required only for the TUI.
+- `npm run build-tui` builds the Go TUI binary from source.
+- `npm install` downloads a prebuilt TUI binary for the current platform from the GitHub release matching `package.json` version; if the download fails it falls back to building from source when Go is installed.
+- `.github/workflows/release-tui.yml` builds and uploads TUI binaries for Linux, macOS, and Windows (x64 and arm64) when a GitHub release is published.
 
 ## Environment
 - Target the latest Node.js LTS / current version.
@@ -31,7 +32,7 @@
 - `index.js` is the CLI entry point (with `#!/usr/bin/env node`) and accepts either a `.torrent` file path or a `magnet:` link; use `-o <dir>` to set the output directory.
 - `src/cli.js` implements the command-line interface with `--help`, `--version`, `--output`, `--quiet`, `--json`, and `--concurrency` flags. It accepts multiple `.torrent` files or `magnet:` links and downloads them sequentially or concurrently.
 - `package.json` exposes the `torl` binary via `index.js` and declares Node.js `>=20.0.0` as the engine requirement.
-- `tui/` is a Go module with a Bubble Tea TUI (`torl-tui`) that spawns `torl --json` and displays progress, peers, and status. It accepts multiple `.torrent` files and `magnet:` links, builds to a single binary, and requires `torl` in `PATH` or a `--torl-path` override. Running `npm install` will build `torl-tui` automatically if Go is installed; otherwise use `npm run build-tui` after installing Go.
+- `tui/` is a Go module with a Bubble Tea TUI (`torl-tui`) that spawns `torl --json` and displays progress, peers, and status. It accepts multiple `.torrent` files and `magnet:` links, builds to a single binary, and requires `torl` in `PATH` or a `--torl-path` override. `npm install` downloads a prebuilt `torl-tui` binary from the GitHub release matching the package version; if the download fails, it falls back to building from source when Go is installed.
 - `tests/mocks/` contains a local UDP tracker, TCP peer, DHT node, UPnP gateway, NAT-PMP gateway, and metadata peer for fast, deterministic integration tests.
 
 ## Dependencies

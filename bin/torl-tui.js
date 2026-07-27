@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 'use strict';
 
-import { spawnSync } from 'child_process';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
+import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
-const localBinary = join(rootDir, 'tui', 'torl-tui');
+const localBinary = join(rootDir, 'tui', process.platform === 'win32' ? 'torl-tui.exe' : 'torl-tui');
 
 function findBinary() {
   if (existsSync(localBinary)) {

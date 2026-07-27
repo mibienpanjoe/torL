@@ -33,6 +33,14 @@
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mibienpanjoe/torL.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mibienpanjoe/torL/issues"
+  },
+  "homepage": "https://github.com/mibienpanjoe/torL#readme",
   "type": "module",
   "engines": {
     "node": ">=20.0.0"

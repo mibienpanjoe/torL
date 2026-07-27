@@ -61,6 +61,16 @@
 - [x] Update `AGENTS.md`.
 - [x] All tests pass.
 
+## Release / Publishing
+
+- [x] Add repository URL, homepage, and bug tracker to `package.json`.
+- [x] Update `scripts/install-tui.js` to download prebuilt TUI binaries from GitHub releases with a Go build fallback.
+- [x] Update `bin/torl-tui.js` to locate the binary on Windows (`torl-tui.exe`).
+- [x] Add `.github/workflows/release-tui.yml` to build and upload TUI binaries for Linux, macOS, and Windows (x64 and arm64) on release.
+- [x] Add tests for install-script helpers and the download fallback.
+- [ ] Verify `npm install` works with and without Go, and `npm publish` succeeds.
+- [ ] Publish `torl@1.0.0` to npm.
+
 ## Plan
 
 - `tasks/plan.md` documents Phase 4 (NAT traversal).
