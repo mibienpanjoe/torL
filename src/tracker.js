@@ -7,26 +7,114 @@ import bencode from 'bencode';
 import * as torrentParser from './torrent-parser.js';
 import * as util from './util.js';
 
+function getTrackerTimeout() {
+  const value = parseInt(process.env.TORL_TRACKER_TIMEOUT, 10);
+  return value > 0 ? value : 15000;
+}
+
 export function getPeers(torrent, callback, signal) {
-  const url = torrent.announce.toString('utf8');
-  if (url.startsWith('udp')) {
-    udpGetPeers(torrent, callback, signal);
-  } else {
-    httpGetPeers(torrent, callback, signal);
+  const urls = getAnnounceUrls(torrent);
+  tryTrackers(torrent, urls, callback, signal);
+}
+
+function getAnnounceUrls(torrent) {
+  const urls = [];
+  if (torrent['announce-list'] && Array.isArray(torrent['announce-list'])) {
+    for (const tier of torrent['announce-list']) {
+      for (const url of tier) {
+        urls.push(url.toString('utf8'));
+      }
+    }
   }
+  if (torrent.announce && torrent.announce.length > 0) {
+    const primary = torrent.announce.toString('utf8');
+    if (!urls.includes(primary)) {
+      urls.unshift(primary);
+    }
+  }
+  return urls;
+}
+
+function tryTrackers(torrent, urls, callback, signal) {
+  if (urls.length === 0) {
+    callback([], 60);
+    return;
+  }
+
+  const [url, ...rest] = urls;
+  const trackerSignal = combineTimeoutSignal(signal, getTrackerTimeout());
+
+  function onDone(peers, interval) {
+    trackerSignal.cleanup();
+    callback(peers, interval);
+  }
+
+  function onError(err) {
+    trackerSignal.cleanup();
+    console.warn(`Tracker ${url} failed: ${err.message}`);
+    tryTrackers(torrent, rest, callback, signal);
+  }
+
+  try {
+    if (url.startsWith('udp')) {
+      udpGetPeers(torrent, url, onDone, onError, trackerSignal.signal);
+    } else {
+      httpGetPeers(torrent, url, onDone, onError, trackerSignal.signal);
+    }
+  } catch (err) {
+    onError(err);
+  }
+}
+
+function combineTimeoutSignal(signal, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  if (signal) {
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      controller.abort();
+    }, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => clearTimeout(timer)
+  };
 }
 
 // --- UDP tracker ---
 
-function udpGetPeers(torrent, callback, signal) {
+function udpGetPeers(torrent, url, onDone, onError, signal) {
   const socket = dgram.createSocket('udp4');
-  const url = torrent.announce.toString('utf8');
+  let closed = false;
+  const timer = setTimeout(() => {
+    if (!closed) {
+      closed = true;
+      try { socket.close(); } catch (e) {}
+      onError(new Error('UDP tracker timeout'));
+    }
+  }, getTrackerTimeout());
 
   if (signal) {
     signal.addEventListener('abort', () => {
-      try { socket.close(); } catch (e) {}
+      if (!closed) {
+        closed = true;
+        clearTimeout(timer);
+        try { socket.close(); } catch (e) {}
+        onError(new Error('Tracker request aborted'));
+      }
     }, { once: true });
   }
+
+  socket.on('error', err => {
+    if (!closed) {
+      closed = true;
+      clearTimeout(timer);
+      try { socket.close(); } catch (e) {}
+      onError(err);
+    }
+  });
 
   // 1. send connect request
   udpSend(socket, buildConnReq(), url);
@@ -42,8 +130,12 @@ function udpGetPeers(torrent, callback, signal) {
       // 4. parse announce response
       const announceResp = parseAnnounceResp(response);
       // 5. pass peers and interval to callback and close the socket
-      callback(announceResp.peers, announceResp.interval);
-      socket.close();
+      if (!closed) {
+        closed = true;
+        clearTimeout(timer);
+        try { socket.close(); } catch (e) {}
+        onDone(announceResp.peers, announceResp.interval);
+      }
     }
   });
 }
@@ -146,35 +238,38 @@ function parseAnnounceResp(resp) {
 
 // --- HTTP tracker ---
 
-async function httpGetPeers(torrent, callback, signal) {
-  const announceUrl = torrent.announce.toString('utf8');
+async function httpGetPeers(torrent, url, onDone, onError, signal) {
   const infoHash = torrent.infoHash || torrentParser.infoHash(torrent);
   const peerId = util.genId();
   const left = torrent.info.files
     ? torrent.info.files.reduce((sum, f) => sum + f.length, 0)
     : (torrent.info.length || 0);
 
-  const url = buildHttpUrl(announceUrl, infoHash, peerId, left);
+  const fullUrl = buildHttpUrl(url, infoHash, peerId, left);
 
-  const response = await fetch(url, { signal });
-  const arrayBuffer = await response.arrayBuffer();
-  const decoded = bencode.decode(Buffer.from(arrayBuffer));
+  try {
+    const response = await fetch(fullUrl, { signal });
+    const arrayBuffer = await response.arrayBuffer();
+    const decoded = bencode.decode(Buffer.from(arrayBuffer));
 
-  if (decoded['failure reason']) {
-    throw new Error(decoded['failure reason'].toString('utf8'));
+    if (decoded['failure reason']) {
+      throw new Error(decoded['failure reason'].toString('utf8'));
+    }
+
+    const peers = decoded.peers ? Buffer.from(decoded.peers) : Buffer.alloc(0);
+    const peerList = [];
+    for (let i = 0; i < peers.length; i += 6) {
+      peerList.push({
+        ip: peers.slice(i, i + 4).join('.'),
+        port: peers.readUInt16BE(i + 4)
+      });
+    }
+
+    const interval = typeof decoded.interval === 'number' ? decoded.interval : 60;
+    onDone(peerList, interval);
+  } catch (err) {
+    onError(err);
   }
-
-  const peers = Buffer.from(decoded.peers);
-  const peerList = [];
-  for (let i = 0; i < peers.length; i += 6) {
-    peerList.push({
-      ip: peers.slice(i, i + 4).join('.'),
-      port: peers.readUInt16BE(i + 4)
-    });
-  }
-
-  const interval = typeof decoded.interval === 'number' ? decoded.interval : 60;
-  callback(peerList, interval);
 }
 
 function buildHttpUrl(announceUrl, infoHash, peerId, left) {
