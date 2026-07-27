@@ -20,13 +20,19 @@ export default function download(torrent, rootPath, options = {}) {
     log = () => {},
     announceInterval: overrideAnnounceInterval = null,
     useDHT = true,
-    dhtBootstrapNodes = undefined
+    dhtBootstrapNodes = undefined,
+    peers: injectedPeers = null,
+    onProgress = () => {}
   } = options;
 
   return new Promise((resolve, reject) => {
     const trackerController = new AbortController();
 
-    getPeers(torrent, useDHT, trackerController, dhtBootstrapNodes).then(({ peers, interval }) => {
+    const peersPromise = injectedPeers
+      ? Promise.resolve({ peers: injectedPeers, interval: null })
+      : getPeers(torrent, useDHT, trackerController, dhtBootstrapNodes);
+
+    peersPromise.then(({ peers, interval }) => {
       const savedBitfield = state.load(rootPath);
       const verifiedBitfield = verify.verifyPieces(torrent, rootPath, savedBitfield);
       const pieces = new Pieces(torrent, verifiedBitfield);
@@ -43,6 +49,7 @@ export default function download(torrent, rootPath, options = {}) {
         maxRetries,
         retryDelay,
         log,
+        onProgress,
         onComplete: resolve,
         onError: reject,
         trackerController
@@ -58,6 +65,13 @@ export default function download(torrent, rootPath, options = {}) {
       }
     }).catch(reject);
   });
+}
+
+export function torrentSize(torrent) {
+  if (torrent.info.files) {
+    return torrent.info.files.reduce((sum, f) => sum + f.length, 0);
+  }
+  return torrent.info.length;
 }
 
 async function getPeers(torrent, useDHT, trackerController, dhtBootstrapNodes) {
@@ -103,9 +117,12 @@ class PeerPool {
     this.maxRetries = options.maxRetries;
     this.retryDelay = options.retryDelay;
     this.log = options.log;
+    this.onProgress = options.onProgress;
     this.onComplete = options.onComplete;
     this.onError = options.onError;
     this.trackerController = options.trackerController;
+    this.totalSize = torrentSize(torrent);
+    this.totalPieces = torrent.info.pieces.length / 20;
 
     this.availablePeers = [];
     this.activePeers = new Map();
@@ -181,6 +198,8 @@ class PeerPool {
     });
 
     onWholeMsg(socket, msg => this._msgHandler(msg, id));
+    this.onProgress({ type: 'peer', action: 'connected', peer: id });
+    this._emitProgress();
   }
 
   _handleDisconnect(id) {
@@ -192,6 +211,29 @@ class PeerPool {
     this.availablePeers.push(peer.peer);
     this._scheduleRetry(id);
     this._checkProgress();
+    this.onProgress({ type: 'peer', action: 'disconnected', peer: id });
+    this._emitProgress();
+  }
+
+  _emitProgress() {
+    const completed = this.pieces.completedBitfield();
+    let completedPieces = 0;
+    for (let i = 0; i < this.totalPieces; i++) {
+      const byte = completed[Math.floor(i / 8)];
+      const bit = byte & (0x80 >> (i % 8));
+      if (bit) completedPieces++;
+    }
+    const downloaded = completedPieces * this.torrent.info['piece length'];
+    this.onProgress({
+      type: 'progress',
+      downloaded: Math.min(downloaded, this.totalSize),
+      total: this.totalSize,
+      percent: this.totalSize > 0 ? Math.min(downloaded, this.totalSize) / this.totalSize : 0,
+      completedPieces,
+      totalPieces: this.totalPieces,
+      activePeers: this.activePeers.size,
+      availablePeers: this.availablePeers.length
+    });
   }
 
   _scheduleRetry(id) {
@@ -267,7 +309,7 @@ class PeerPool {
       if (m.id === 1) unchokeHandler(socket, this.torrent, this.pieces, queue, this.rootPath);
       if (m.id === 4) haveHandler(socket, this.torrent, this.pieces, queue, this.rootPath, m.payload);
       if (m.id === 5) bitfieldHandler(socket, this.torrent, this.pieces, queue, this.rootPath, m.payload);
-      if (m.id === 7) pieceHandler(socket, this.torrent, this.pieces, queue, this.rootPath, m.payload, this._checkProgress.bind(this));
+      if (m.id === 7) pieceHandler(socket, this.torrent, this.pieces, queue, this.rootPath, m.payload, this._checkProgress.bind(this), this._emitProgress.bind(this));
     }
   }
 }
@@ -325,7 +367,7 @@ function bitfieldHandler(socket, torrent, pieces, queue, rootPath, payload) {
   if (queueEmpty) requestPiece(socket, torrent, pieces, queue, rootPath);
 }
 
-function pieceHandler(socket, torrent, pieces, queue, rootPath, pieceResp, onProgress = () => {}) {
+function pieceHandler(socket, torrent, pieces, queue, rootPath, pieceResp, onProgress = () => {}, emitProgress = () => {}) {
   pieces.addReceived(pieceResp);
 
   const offset = pieceResp.index * torrent.info['piece length'] + pieceResp.begin;
@@ -333,6 +375,7 @@ function pieceHandler(socket, torrent, pieces, queue, rootPath, pieceResp, onPro
 
   if (pieces.isPieceDone(pieceResp.index)) {
     state.save(rootPath, pieces.completedBitfield());
+    emitProgress();
   }
 
   if (pieces.isDone()) {

@@ -1,15 +1,38 @@
 {
   "name": "torl",
   "version": "1.0.0",
-  "description": "",
+  "description": "A minimal BitTorrent client for Node.js",
   "main": "index.js",
-  "scripts": {
-    "test": "node --test"
+  "bin": {
+    "torl": "index.js",
+    "torl-tui": "bin/torl-tui.js"
   },
-  "keywords": [],
+  "files": [
+    "index.js",
+    "src/",
+    "bin/",
+    "scripts/",
+    "tui/",
+    "!tui/torl-tui",
+    "AGENTS.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "build-tui": "node scripts/install-tui.js",
+    "postinstall": "node scripts/install-tui.js"
+  },
+  "keywords": [
+    "bittorrent",
+    "torrent",
+    "download",
+    "magnet"
+  ],
   "author": "",
   "license": "ISC",
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "bencode": "^4.0.1"
   }

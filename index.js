@@ -1,8 +1,11 @@
+#!/usr/bin/env node
 'use strict';
 
-import download from './src/download.js';
-import * as torrentParser from './src/torrent-parser.js';
+import run from './src/cli.js';
 
-const torrent = torrentParser.open(process.argv[2]);
-
-download(torrent, torrent.info.name);
+run(process.argv).then(code => {
+  process.exit(code);
+}).catch(err => {
+  console.error(err.message);
+  process.exit(1);
+});
