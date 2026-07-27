@@ -97,6 +97,37 @@
 - [x] Print the actual error message instead of generic `Download cancelled`.
 - [x] Publish `torl-client@1.0.6` to npm.
 
+## TUI Pause/Resume and Per-Torrent Control
+
+See `tasks/plan.md` for the full plan.
+
+### Phase 1: CLI graceful shutdown and periodic state save
+- [ ] Add SIGTERM/SIGINT handlers to `bin/torl-cli.js`.
+- [ ] Extend `src/download.js` to shut down cleanly and save state.
+- [ ] Add periodic state save during download.
+- [ ] Add/update Node tests.
+
+### Phase 2: TUI process-per-torrent refactor
+- [ ] Replace single `spawnTorl()` with a process per input.
+- [ ] Route events per process into the shared `Downloads` map.
+- [ ] Add Go tests.
+
+### Phase 3: Selection and per-torrent pause/resume
+- [ ] Add `cursor` and `↑`/`↓` selection.
+- [ ] Implement `p` to pause/resume the selected torrent.
+- [ ] Add `Paused` / `Resuming` badges.
+- [ ] Add Go tests.
+
+### Phase 4: Global graceful quit
+- [ ] Graceful shutdown for all processes on `q` / `Ctrl+C`.
+- [ ] Show "Saving progress..." while shutting down.
+- [ ] Add Go tests.
+
+### Phase 5: Integration, docs, and release
+- [ ] Full test suite.
+- [ ] Update README.md and AGENTS.md.
+- [ ] Bump version, create release, publish to npm.
+
 ## Plan
 
 - `tasks/plan.md` documents Phase 4 (NAT traversal).

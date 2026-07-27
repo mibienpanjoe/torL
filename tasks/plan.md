@@ -1,81 +1,81 @@
-# Implementation Plan: Phase 4 — NAT Traversal
+# Implementation Plan: TUI Pause/Resume and Individual Torrent Control
 
 ## Overview
 
-Add NAT traversal utilities so torL can request a public port mapping from the local router. Even though the current client is leecher-only, exposing `mapPort` and `unmapPort` makes future peer-listening and DHT reachability possible. This phase focuses on UPnP IGD and NAT-PMP, the two most common router protocols.
-
-## Scope
-
-- **UPnP IGD** — discover the gateway via SSDP and request a port mapping via SOAP `AddPortMapping`.
-- **NAT-PMP** — request a port mapping via UDP to the gateway.
-- **Exclusions:** uTP/UDP hole punching, STUN/TURN, and actually listening for incoming peer connections are out of scope.
+Add pause/resume support to the TUI with per-torrent control. Each torrent runs in its own `torl-cli --json` process so one failure does not affect the others. Users can select a torrent with arrow keys and press `p` to pause or resume it. Quitting the TUI (`q` or `Ctrl+C`) gracefully stops all active downloads and persists progress to existing `.torl.state` files. Re-launching the same torrent automatically resumes from the saved state.
 
 ## Architecture Decisions
 
-- **`src/nat.js` is a utility module.** It exposes `mapPort` and `unmapPort` and returns the external address/port on success.
-- **Try UPnP first, then NAT-PMP.** UPnP is more common on consumer routers; NAT-PMP is common on Apple/BSD routers.
-- **No external dependencies.** Implement SSDP/SOAP/NAT-PMP by hand using Node.js built-in UDP and HTTP clients.
-- **Best-effort.** NAT mapping can fail silently if the router does not support it or is disabled. Return `null` on failure.
-- **Tests use mocks.** A mock UPnP gateway and a mock NAT-PMP gateway respond to discovery and mapping requests so the protocol paths are deterministic.
-- **Integration is optional.** Expose a `tryMapPort` helper that can be called from CLI or future download code, but do not require it for downloads.
+- **One process per torrent.** The TUI spawns a separate `torl-cli` process for each input. This isolates failures and makes per-torrent pause/resume straightforward.
+- **Pause is a graceful stop + save.** Pressing `p` sends a controlled shutdown signal to the selected process. The CLI saves its bitfield state and exits. Resume spawns a fresh process that reads the state file and continues.
+- **Resume is implicit.** The CLI already verifies existing files against the info hash and loads `.torl.state` on startup. The TUI does not need new resume logic beyond re-spawning a process for the same input.
+- **Cross-platform signal handling.** On Unix, send `SIGTERM`. On Windows, kill the process tree; the CLI state file is written on a best-effort basis. Because Windows lacks reliable graceful signals, the CLI will also periodically save state during download to minimize data loss.
+- **Selection model.** The TUI maintains a `cursor` index. Only the selected download responds to `p`. Visual highlighting shows which torrent is selected.
+- **State badges.** `Downloading`, `Paused`, `Resuming`, `Complete`, `Error`.
 
 ## Task List
 
-### Phase 4.1: UPnP IGD
-- [ ] Task 1: SSDP discovery and SOAP AddPortMapping
-  - **Description:** Implement SSDP M-SEARCH discovery to find the IGD control URL, parse the IGD description XML, and send a SOAP `AddPortMapping` request. Also implement `DeletePortMapping` for cleanup.
-  - **Files likely touched:** `src/nat.js`, `tests/nat.test.js`, `tests/mocks/upnp-gateway.js`
-  - **Acceptance criteria:**
-    - A mock UPnP gateway is discovered and mapped successfully.
-    - External IP and port are returned.
-    - `unmapPort` cleans up the mapping.
-    - All failures return `null`.
-  - **Estimated scope:** Medium–Large (3–4 files)
+### Phase 1: CLI graceful shutdown and periodic state save
+- [ ] Task 1: Add SIGTERM/SIGINT handlers to `bin/torl-cli.js` that forward a shutdown request into `download.js`.
+- [ ] Task 2: Extend `src/download.js` to accept an abort/shutdown signal, close peer sockets, save the bitfield, and exit cleanly.
+- [ ] Task 3: Add periodic state save during download (every 30s or on every completed piece) so Windows and hard kills lose minimal progress.
+- [ ] Task 4: Add/update tests for graceful shutdown and periodic state save.
 
-### Checkpoint: UPnP
+**Checkpoint: Phase 1**
 - [ ] `npm test` passes.
-- [ ] UPnP unit/integration tests pass.
+- [ ] Running `torl-cli` and sending SIGTERM saves a valid `.torl.state` file.
 
-### Phase 4.2: NAT-PMP
-- [ ] Task 2: NAT-PMP port mapping
-  - **Description:** Implement NAT-PMP `map udp` and `map tcp` requests to the default gateway (`.1` on the local network). Parse the response and return the external address/port.
-  - **Files likely touched:** `src/nat.js`, `tests/nat.test.js`, `tests/mocks/natpmp-gateway.js`
-  - **Acceptance criteria:**
-    - A mock NAT-PMP gateway responds to mapping requests.
-    - External port and lifetime are returned.
-    - Unsupported gateways return `null`.
-  - **Estimated scope:** Medium (2–3 files)
+### Phase 2: TUI process-per-torrent refactor
+- [ ] Task 5: Replace single `spawnTorl()` with a `Process` struct per input in `tui/torl/model.go`.
+- [ ] Task 6: Spawn one `torl-cli --json -o <dir> <input>` process per input on TUI start.
+- [ ] Task 7: Route stdout/stderr and events per process back into the shared `Downloads` map keyed by input.
+- [ ] Task 8: Add Go tests for process lifecycle and event routing.
 
-### Checkpoint: NAT-PMP
-- [ ] `npm test` passes.
-- [ ] NAT-PMP unit/integration tests pass.
+**Checkpoint: Phase 2**
+- [ ] `go test ./...` passes.
+- [ ] TUI still works for single and multiple torrents.
 
-### Phase 4.3: Public API and cleanup
-- [ ] Task 3: Expose `mapPort` / `unmapPort` and update docs
-  - **Description:** Provide a unified `mapPort` that tries UPnP then NAT-PMP, and `unmapPort` that cleans up the same mapping. Add a CLI option or note in `AGENTS.md`.
-  - **Files likely touched:** `src/nat.js`, `AGENTS.md`, `tasks/plan.md`
-  - **Acceptance criteria:**
-    - `mapPort` tries UPnP, then NAT-PMP.
-    - `unmapPort` uses the same protocol that succeeded.
-    - `AGENTS.md` documents the NAT utilities.
-  - **Estimated scope:** Small (1–2 files)
+### Phase 3: Selection and per-torrent pause/resume
+- [ ] Task 9: Add `cursor` index and `↑`/`↓` key handling to the TUI model.
+- [ ] Task 10: Highlight the selected download in `View()`.
+- [ ] Task 11: Implement `p` to pause/resume the selected process: send shutdown signal (pause) or spawn a new process (resume).
+- [ ] Task 12: Add `Paused` and `Resuming` status badges.
+- [ ] Task 13: Add Go tests for selection and pause/resume.
 
-### Checkpoint: Complete
+**Checkpoint: Phase 3**
+- [ ] `go test ./...` passes.
+- [ ] Manual test: pause one torrent while another keeps downloading.
+
+### Phase 4: Global graceful quit
+- [ ] Task 14: On `q` / `Ctrl+C`, send shutdown signals to all active processes and wait for them to exit before the TUI closes.
+- [ ] Task 15: Show a brief "Saving progress..." message while shutting down.
+- [ ] Task 16: Add Go tests for global shutdown.
+
+**Checkpoint: Phase 4**
+- [ ] `go test ./...` passes.
+- [ ] Manual test: quit with multiple active downloads and verify `.torl.state` files exist.
+
+### Phase 5: Integration, docs, and release
+- [ ] Task 17: Run full `npm test` and `go test ./...`.
+- [ ] Task 18: Update README.md with new TUI keybindings.
+- [ ] Task 19: Update AGENTS.md to document the one-process-per-torrent design and signal handling.
+- [ ] Task 20: Bump version, create GitHub release, publish to npm.
+
+**Checkpoint: Complete**
 - [ ] All tests pass.
-- [ ] `AGENTS.md` updated.
-- [ ] Code review passes.
+- [ ] Package published.
 
 ## Risks and Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Real routers have quirks | High | Only implement spec basics; treat failures as best-effort. |
-| XML parsing for UPnP is fragile | Medium | Use simple regex/string matching; avoid full XML parser dependency. |
-| NAT-PMP requires sending to the router IP | Medium | Derive gateway from the default route or hardcode `.1` in tests. |
-| Tests are not portable across networks | High | All tests use local mocks; live router testing is manual only. |
+| Signal handling differs on Windows | High | Periodic state saves every 30s or per completed piece; pause on Windows may lose a small window of progress. |
+| Spawning many processes for many torrents | Medium | Cap is implicit via Node/Go resource limits; acceptable for typical use (tens of torrents). |
+| Race conditions in TUI event routing | Medium | Use existing mutex; route events by input ID; add targeted tests. |
+| Pause during active piece request leaves partial piece | Low | Periodic state save + verification on resume re-checks partially downloaded pieces. |
 
 ## Open Questions
 
-- Should `mapPort` default to the same port internally and externally, or allow them to differ? (Default to the same port; allow override.)
-- Should the lease be short (e.g., 10 minutes) and renewed periodically? (Use a reasonable default like 1 hour; out-of-scope renewal.)
-- Should the CLI call `mapPort` automatically? (No; keep it manual or future opt-in.)
+- Should `Ctrl+C` always be a graceful pause, or should a second `Ctrl+C` force-kill? (Recommended: first graceful, second force-kill.)
+- Should the TUI show a confirmation before quitting if downloads are active? (Recommended: no, just pause and quit.)
+- Should paused torrents be automatically resumed when the TUI restarts? (Recommended: yes, via existing CLI resume; no extra TUI action needed.)
