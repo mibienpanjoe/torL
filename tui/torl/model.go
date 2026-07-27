@@ -75,6 +75,9 @@ type Download struct {
 	Err             error
 	Done            bool
 	Started         bool
+	LastUpdate      time.Time
+	LastDownloaded  int64
+	SpeedBps        float64
 }
 
 // Model manages the whole TUI and multiple downloads.
@@ -191,6 +194,22 @@ func (m *Model) handleEvent(event Event) {
 		d.TotalPieces = event.TotalPieces
 		d.Status = "Downloading"
 	case "progress":
+		now := time.Now()
+		if !d.LastUpdate.IsZero() {
+			elapsed := now.Sub(d.LastUpdate).Seconds()
+			if elapsed > 0 {
+				delta := event.Downloaded - d.LastDownloaded
+				instant := float64(delta) / elapsed
+				// Simple exponential smoothing to avoid jitter.
+				if d.SpeedBps == 0 {
+					d.SpeedBps = instant
+				} else {
+					d.SpeedBps = 0.7*d.SpeedBps + 0.3*instant
+				}
+			}
+		}
+		d.LastUpdate = now
+		d.LastDownloaded = event.Downloaded
 		d.Downloaded = event.Downloaded
 		d.Total = event.Total
 		d.Percent = event.Percent
@@ -309,10 +328,15 @@ func (m *Model) renderDownload(d *Download) string {
 		b.WriteString(fmt.Sprintf("\n%s Connecting to peers...\n", m.spinner.View()))
 	} else {
 		b.WriteString("\n" + m.progress.ViewAs(d.Percent) + "\n")
-		b.WriteString(infoStyle.Render(fmt.Sprintf("%.1f%%  %s / %s  %d / %d pieces  peers: %d",
+		speed := ""
+		if d.SpeedBps > 0 {
+			speed = fmt.Sprintf("  %s/s", formatBytes(int64(d.SpeedBps)))
+		}
+		b.WriteString(infoStyle.Render(fmt.Sprintf("%.1f%%  %s / %s%s  %d / %d pieces  peers: %d",
 			d.Percent*100,
 			formatBytes(d.Downloaded),
 			formatBytes(d.Total),
+			speed,
 			d.CompletedPieces,
 			d.TotalPieces,
 			d.ActivePeers)) + "\n")
