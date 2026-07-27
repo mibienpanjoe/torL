@@ -1,5 +1,5 @@
 {
-  "name": "torl",
+  "name": "torl-client",
   "version": "1.0.0",
   "description": "A minimal BitTorrent client for Node.js",
   "main": "index.js",
@@ -35,7 +35,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mibienpanjoe/torL.git"
+    "url": "git+https://github.com/mibienpanjoe/torL.git"
   },
   "bugs": {
     "url": "https://github.com/mibienpanjoe/torL/issues"
