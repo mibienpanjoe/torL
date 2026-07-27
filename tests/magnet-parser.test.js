@@ -40,7 +40,7 @@ describe('magnet-parser', () => {
     assert.strictEqual(torrent.infoHash.toString('hex'), '1234567890abcdef1234567890abcdef12345678');
     assert.strictEqual(torrent.name, 'Test');
     assert.strictEqual(torrent.announce, 'udp://tracker.com');
-    assert.deepStrictEqual(torrent.announceList, [['udp://tracker.com']]);
+    assert.deepStrictEqual(torrent['announce-list'], [['udp://tracker.com']]);
     assert.strictEqual(torrent.isMagnet, true);
   });
 });

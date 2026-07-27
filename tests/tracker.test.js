@@ -31,6 +31,31 @@ describe('tracker', () => {
     }
   });
 
+  it('falls back to the next tracker when the first one returns empty peers', async () => {
+    const emptyTracker = await createMockTracker(0, []);
+    const goodTracker = await createMockTracker(0, [{ ip: '127.0.0.1', port: 6883 }]);
+    const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'single-file.torrent'));
+    torrent.announce = Buffer.from(emptyTracker.url);
+    torrent['announce-list'] = [
+      [Buffer.from(emptyTracker.url)],
+      [Buffer.from(goodTracker.url)]
+    ];
+
+    try {
+      const { peers, interval } = await new Promise((resolve, reject) => {
+        tracker.getPeers(torrent, (peers, interval) => {
+          resolve({ peers, interval });
+        });
+      });
+      assert.strictEqual(peers.length, 1);
+      assert.strictEqual(peers[0].ip, '127.0.0.1');
+      assert.strictEqual(peers[0].port, 6883);
+    } finally {
+      emptyTracker.close();
+      goodTracker.close();
+    }
+  });
+
   it('falls back to the next tracker when the first one fails', async () => {
     const goodTracker = await createMockTracker(0, [{ ip: '127.0.0.1', port: 6882 }]);
     const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'single-file.torrent'));

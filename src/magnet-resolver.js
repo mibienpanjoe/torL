@@ -55,7 +55,7 @@ function buildTorrentFromMagnet(magnet, info, metadata) {
     infoHash: magnet.infoHash,
     infoHashHex: magnet.infoHash.toString('hex'),
     announce: announce ? Buffer.from(announce) : null,
-    announceList: magnet.trackers.length ? magnet.trackers.map(t => [t]) : [],
+    'announce-list': magnet.trackers.length ? magnet.trackers.map(t => [Buffer.from(t)]) : [],
     name: info.name.toString('utf8'),
     length: info.length,
     metadata,

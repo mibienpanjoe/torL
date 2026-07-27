@@ -73,7 +73,7 @@ export function magnetLinkToTorrent(magnet) {
     infoHash: magnet.infoHash,
     infoHashHex: magnet.infoHashHex,
     announce: magnet.trackers[0] || null,
-    announceList: magnet.trackers.length ? magnet.trackers.map(t => [t]) : [],
+    'announce-list': magnet.trackers.length ? magnet.trackers.map(t => [t]) : [],
     name: magnet.name,
     length: magnet.length,
     isMagnet: true

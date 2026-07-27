@@ -35,9 +35,9 @@ function getAnnounceUrls(torrent) {
   return urls;
 }
 
-function tryTrackers(torrent, urls, callback, signal) {
+function tryTrackers(torrent, urls, callback, signal, bestInterval = 60) {
   if (urls.length === 0) {
-    callback([], 60);
+    callback([], bestInterval);
     return;
   }
 
@@ -46,13 +46,18 @@ function tryTrackers(torrent, urls, callback, signal) {
 
   function onDone(peers, interval) {
     trackerSignal.cleanup();
-    callback(peers, interval);
+    if (peers.length > 0) {
+      callback(peers, interval || bestInterval);
+      return;
+    }
+    // Empty response: try the next tracker.
+    tryTrackers(torrent, rest, callback, signal, interval > 0 ? interval : bestInterval);
   }
 
   function onError(err) {
     trackerSignal.cleanup();
     console.warn(`Tracker ${url} failed: ${err.message}`);
-    tryTrackers(torrent, rest, callback, signal);
+    tryTrackers(torrent, rest, callback, signal, bestInterval);
   }
 
   try {
