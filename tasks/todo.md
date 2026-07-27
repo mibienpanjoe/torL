@@ -1,38 +1,56 @@
-# torL Phase 3 — DHT Peer Discovery
+# torL Phase 4 — NAT Traversal
 
-## Phase 3.1: DHT Primitives
-- [x] DHT message encoding/decoding and node ID utilities
-  - Added `src/dht.js` with node ID generation, XOR distance, BEP 5 encode/decode, and compact node/peer parsing.
-  - Added `tests/dht.test.js` for ping, find_node, get_peers, announce_peer, and responses.
+## Phase 4.1: UPnP IGD
+- [x] Task 1: SSDP discovery and SOAP AddPortMapping
+  - Implement SSDP M-SEARCH discovery.
+  - Parse IGD description XML for control URL.
+  - Send SOAP AddPortMapping / DeletePortMapping.
+  - Add mock UPnP gateway and tests.
 
-## Checkpoint: DHT Primitives
+## Checkpoint: UPnP
 - [x] `npm test` passes.
-- [x] Unit tests cover all message types.
+- [x] UPnP tests pass.
 
-## Phase 3.2: Bootstrap and Routing Table
-- [x] Bootstrap and routing table
-  - `DHTClient` maintains a simple sorted list of known DHT nodes and bootstraps from public routers.
+## Phase 4.2: NAT-PMP
+- [x] Task 2: NAT-PMP port mapping
+  - Implement NAT-PMP map request/response.
+  - Add mock NAT-PMP gateway and tests.
 
-## Phase 3.3: Iterative Peer Lookup
-- [x] Iterative `get_peers` lookup
-  - Implemented traversal of the DHT to find peers for an info hash.
-  - Added `tests/mocks/dht.js` mock DHT network.
-  - Added `tests/dht-integration.test.js` for end-to-end lookup.
-
-## Checkpoint: Iterative Lookup
+## Checkpoint: NAT-PMP
 - [x] `npm test` passes.
-- [x] Mock DHT lookup test passes.
+- [x] NAT-PMP tests pass.
 
-## Phase 3.4: Integration
-- [x] Wire DHT into `download.js`
-  - `download()` queries both tracker and DHT when enabled.
-  - DHT is used as a fallback when the torrent has no tracker.
-  - Added `download` test that downloads a torrent solely via DHT.
+## Phase 4.3: Public API and Cleanup
+- [x] Task 3: Unified `mapPort` / `unmapPort` and docs
+  - `mapPort` tries UPnP then NAT-PMP.
+  - `unmapPort` cleans up via the same protocol.
+  - Update `AGENTS.md`.
 
 ## Checkpoint: Complete
-- [x] All 56 tests pass.
+- [x] All tests pass.
 - [x] `AGENTS.md` updated.
+
+## Magnet Link Support
+
+- [x] Magnet link parser (`src/magnet-parser.js`)
+- [x] BEP 10 extension protocol messages (`src/message.js`)
+- [x] BEP 9 metadata downloader (`src/metadata-downloader.js`)
+- [x] Magnet resolver with tracker/DHT peer discovery (`src/magnet-resolver.js`)
+- [x] CLI accepts magnet links (`index.js`)
+- [x] End-to-end magnet link download test
+- [x] All tests pass.
+
+## TUI (Go + Bubble Tea)
+
+- [x] Add progress callbacks and `--json` flag to torl CLI.
+- [x] Create Go module in `tui/`.
+- [x] Implement Bubble Tea model with progress bar and peer list.
+- [x] Parse torl JSON events in Go.
+- [x] Add Go unit tests for event parsing and model.
+- [x] Build `torl-tui` binary and verify it starts.
+- [x] Update `AGENTS.md` and `.gitignore`.
 
 ## Plan
 
-See `tasks/plan.md` for full architecture decisions, acceptance criteria, and risks.
+- `tasks/plan.md` documents Phase 4 (NAT traversal).
+- Magnet link support and the Go TUI were added incrementally without separate plan files.
