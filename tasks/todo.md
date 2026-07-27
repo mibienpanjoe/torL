@@ -91,6 +91,12 @@
 - [x] Fix accidental inclusion of `tui/tui/` build artifact in npm package.
 - [x] Publish `torl-client@1.0.4` to npm.
 
+## v1.0.5 / v1.0.6
+
+- [x] Track downloader process errors in the TUI model.
+- [x] Print the actual error message instead of generic `Download cancelled`.
+- [x] Publish `torl-client@1.0.6` to npm.
+
 ## Plan
 
 - `tasks/plan.md` documents Phase 4 (NAT traversal).
