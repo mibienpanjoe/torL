@@ -4,6 +4,7 @@
 - Node.js BitTorrent client, **ESM** (`"type": "module"` in `package.json`).
 - CLI entry point: `node index.js <torrent-file>`; output is written to the torrent's `info.name` path.
 - Supports single-file and multi-file torrents via UDP and HTTP trackers.
+- Published to npm as `torl-client`; CLI binaries are `torl` and `torl-tui`.
 - README.md, CONTRIBUTING.md, and LICENSE are maintained for human contributors; AGENTS.md remains the source of truth for agent context.
 
 ## Developer commands
