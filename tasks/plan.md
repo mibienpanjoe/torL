@@ -1,81 +1,237 @@
-# Implementation Plan: TUI Pause/Resume and Individual Torrent Control
+# Implementation Plan: Magnet Download Reliability
 
 ## Overview
 
-Add pause/resume support to the TUI with per-torrent control. Each torrent runs in its own `torl-cli --json` process so one failure does not affect the others. Users can select a torrent with arrow keys and press `p` to pause or resume it. Quitting the TUI (`q` or `Ctrl+C`) gracefully stops all active downloads and persists progress to existing `.torl.state` files. Re-launching the same torrent automatically resumes from the saved state.
+Magnet links fail before any file download starts. The TUI only shows `Download failed: exit status 1` because the real CLI error is swallowed. Root cause analysis shows multiple bugs in peer discovery and magnet resolution — not a bad magnet link (KTorrent proves the swarm exists).
+
+## Root Cause Analysis
+
+### What the user sees
+```
+Download failed: exit status 1
+```
+This comes from the TUI when `torl-cli` exits non-zero. The actual error (`No peers found for magnet link` or `Failed to download metadata from any peer: ...`) is written to stderr and only briefly appears in the TUI Messages panel — then lost.
+
+### Failure pipeline (magnet → download)
+
+```
+magnet URL
+  → parseMagnetLink          ✅ works (info hash + trackers)
+  → resolveMagnet
+      → collectPeers
+          → trackers         ❌ bugs (see below)
+          → DHT              ⚠️ weak / sequential after trackers
+      → downloadMetadata     ⚠️ only runs if peers found
+  → download(torrent)        never reached
+```
+
+### Bug 1 — Tracker stops on first empty success (CRITICAL)
+
+`tracker.js` `tryTrackers` calls `callback(peers)` as soon as **any** tracker responds successfully — even with **0 peers**.
+
+So if tracker #1 answers quickly with an empty list, trackers #2–#11 are **never contacted**.
+
+KTorrent contacts many trackers; torl may stop after the first empty response.
+
+### Bug 2 — Wrong key after magnet resolve (CRITICAL)
+
+`buildTorrentFromMagnet` sets:
+```js
+announceList: [...]   // camelCase
+```
+but `tracker.js` / download path read:
+```js
+torrent['announce-list']   // BEP hyphenated key
+```
+
+Even if metadata download succeeds, the **file download** phase only uses `announce` (first tracker).
+
+### Bug 3 — Peer collection is sequential and incomplete
+
+`collectPeers` does:
+1. Wait for **all** tracker attempts (sequential, 15s each on timeout)
+2. **Then** start DHT
+
+Problems:
+- Slow (up to minutes)
+- DHT never runs in parallel with trackers
+- If trackers return early with `[]` (Bug 1), DHT may still help — but DHT bootstrap is weak and has no overall deadline
+
+### Bug 4 — Magnet announce uses `left=0`
+
+Magnet stub has `info.length = 0` (no `xl=`). Tracker announce sends `left=0`, which many trackers interpret as “seeder”. Seeders often get fewer/no peers.
+
+Should announce with `left = -1` (unknown) or a large value when size is unknown.
+
+### Bug 5 — TUI hides the real error
+
+`torl-cli` prints the real error on stderr. TUI `cmd.Wait()` only surfaces `exit status 1`. User cannot diagnose without running `torl-cli` manually.
+
+### Bug 6 — No magnet-resolution progress events
+
+During resolve (can take 30–120s), no JSON events are emitted. TUI sits on “Starting…” then dies. No “contacting trackers / DHT / downloading metadata” feedback.
+
+### Why KTorrent works
+
+- Queries many trackers in parallel
+- Uses DHT aggressively with a large routing table
+- Does not stop on first empty tracker response
+- Correct left/numwant announce semantics
+- Longer, smarter timeouts
 
 ## Architecture Decisions
 
-- **One process per torrent.** The TUI spawns a separate `torl-cli` process for each input. This isolates failures and makes per-torrent pause/resume straightforward.
-- **Pause is a graceful stop + save.** Pressing `p` sends a controlled shutdown signal to the selected process. The CLI saves its bitfield state and exits. Resume spawns a fresh process that reads the state file and continues.
-- **Resume is implicit.** The CLI already verifies existing files against the info hash and loads `.torl.state` on startup. The TUI does not need new resume logic beyond re-spawning a process for the same input.
-- **Cross-platform signal handling.** On Unix, send `SIGTERM`. On Windows, kill the process tree; the CLI state file is written on a best-effort basis. Because Windows lacks reliable graceful signals, the CLI will also periodically save state during download to minimize data loss.
-- **Selection model.** The TUI maintains a `cursor` index. Only the selected download responds to `p`. Visual highlighting shows which torrent is selected.
-- **State badges.** `Downloading`, `Paused`, `Resuming`, `Complete`, `Error`.
+1. **Keep trying trackers until peers are found or the list is exhausted** — empty success is not success.
+2. **Run trackers + DHT in parallel** with a shared deadline (e.g. 45s).
+3. **Normalize torrent object keys** — always use `announce-list` (BEP form) after magnet resolve.
+4. **Surface CLI stderr in TUI final error** so users see the real message.
+5. **Emit JSON status events** during magnet resolution for TUI feedback.
 
 ## Task List
 
-### Phase 1: CLI graceful shutdown and periodic state save
-- [ ] Task 1: Add SIGTERM/SIGINT handlers to `bin/torl-cli.js` that forward a shutdown request into `download.js`.
-- [ ] Task 2: Extend `src/download.js` to accept an abort/shutdown signal, close peer sockets, save the bitfield, and exit cleanly.
-- [ ] Task 3: Add periodic state save during download (every 30s or on every completed piece) so Windows and hard kills lose minimal progress.
-- [ ] Task 4: Add/update tests for graceful shutdown and periodic state save.
+### Phase 1: Fix peer discovery (must-have for magnet to start)
 
-**Checkpoint: Phase 1**
-- [ ] `npm test` passes.
-- [ ] Running `torl-cli` and sending SIGTERM saves a valid `.torl.state` file.
+#### Task 1: Do not stop tracker fallback on empty peer lists
+**Files:** `src/tracker.js`, `tests/tracker.test.js`
 
-### Phase 2: TUI process-per-torrent refactor
-- [ ] Task 5: Replace single `spawnTorl()` with a `Process` struct per input in `tui/torl/model.go`.
-- [ ] Task 6: Spawn one `torl-cli --json -o <dir> <input>` process per input on TUI start.
-- [ ] Task 7: Route stdout/stderr and events per process back into the shared `Downloads` map keyed by input.
-- [ ] Task 8: Add Go tests for process lifecycle and event routing.
+- If a tracker responds with 0 peers, treat as soft-failure and try the next URL.
+- Only call final callback with peers when `peers.length > 0`, or when all URLs are exhausted (then `[]`).
+- Add test: first tracker returns empty list, second returns peers → gets peers from second.
 
-**Checkpoint: Phase 2**
-- [ ] `go test ./...` passes.
-- [ ] TUI still works for single and multiple torrents.
+**Acceptance:**
+- [ ] Empty tracker response continues to next tracker
+- [ ] Test covers empty-then-success fallback
 
-### Phase 3: Selection and per-torrent pause/resume
-- [ ] Task 9: Add `cursor` index and `↑`/`↓` key handling to the TUI model.
-- [ ] Task 10: Highlight the selected download in `View()`.
-- [ ] Task 11: Implement `p` to pause/resume the selected process: send shutdown signal (pause) or spawn a new process (resume).
-- [ ] Task 12: Add `Paused` and `Resuming` status badges.
-- [ ] Task 13: Add Go tests for selection and pause/resume.
+#### Task 2: Parallel tracker queries with short timeout
+**Files:** `src/tracker.js`, `tests/tracker.test.js`
 
-**Checkpoint: Phase 3**
-- [ ] `go test ./...` passes.
-- [ ] Manual test: pause one torrent while another keeps downloading.
+- Query trackers in parallel batches (e.g. 4 at a time) with ~5s timeout each.
+- Return as soon as any tracker yields peers.
+- Keep sequential fallback only as optional fallback if needed.
 
-### Phase 4: Global graceful quit
-- [ ] Task 14: On `q` / `Ctrl+C`, send shutdown signals to all active processes and wait for them to exit before the TUI closes.
-- [ ] Task 15: Show a brief "Saving progress..." message while shutting down.
-- [ ] Task 16: Add Go tests for global shutdown.
+**Acceptance:**
+- [ ] Multiple trackers contacted concurrently
+- [ ] First non-empty result wins
+- [ ] Worst-case magnet tracker phase << 15s × N
 
-**Checkpoint: Phase 4**
-- [ ] `go test ./...` passes.
-- [ ] Manual test: quit with multiple active downloads and verify `.torl.state` files exist.
+#### Task 3: Fix magnet → torrent announce-list key
+**Files:** `src/magnet-resolver.js`, `src/magnet-parser.js`, tests
 
-### Phase 5: Integration, docs, and release
-- [ ] Task 17: Run full `npm test` and `go test ./...`.
-- [ ] Task 18: Update README.md with new TUI keybindings.
-- [ ] Task 19: Update AGENTS.md to document the one-process-per-torrent design and signal handling.
-- [ ] Task 20: Bump version, create GitHub release, publish to npm.
+- `buildTorrentFromMagnet` must set `'announce-list'` (and keep `announce`).
+- Align `magnetLinkToTorrent` the same way.
+- Ensure `download.js` `hasTracker` checks announce **or** announce-list.
 
-**Checkpoint: Complete**
-- [ ] All tests pass.
-- [ ] Package published.
+**Acceptance:**
+- [ ] Resolved magnet torrents include `announce-list` with all magnet trackers
+- [ ] File-download phase uses full tracker list
 
-## Risks and Mitigations
+#### Task 4: Correct announce `left` for unknown size
+**Files:** `src/tracker.js`
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Signal handling differs on Windows | High | Periodic state saves every 30s or per completed piece; pause on Windows may lose a small window of progress. |
-| Spawning many processes for many torrents | Medium | Cap is implicit via Node/Go resource limits; acceptable for typical use (tens of torrents). |
-| Race conditions in TUI event routing | Medium | Use existing mutex; route events by input ID; add targeted tests. |
-| Pause during active piece request leaves partial piece | Low | Periodic state save + verification on resume re-checks partially downloaded pieces. |
+- When size is 0/unknown (magnet stub), send `left = -1` (or max uint64) so trackers treat client as leecher.
+- HTTP announce: same fix for `left=` query param.
 
-## Open Questions
+**Acceptance:**
+- [ ] Magnet peer discovery announces as leecher, not seeder
 
-- Should `Ctrl+C` always be a graceful pause, or should a second `Ctrl+C` force-kill? (Recommended: first graceful, second force-kill.)
-- Should the TUI show a confirmation before quitting if downloads are active? (Recommended: no, just pause and quit.)
-- Should paused torrents be automatically resumed when the TUI restarts? (Recommended: yes, via existing CLI resume; no extra TUI action needed.)
+#### Task 5: Parallelize trackers + DHT in magnet resolve
+**Files:** `src/magnet-resolver.js`, `src/download.js` (optional shared helper)
+
+- `collectPeers`: start tracker fan-out and DHT lookup together.
+- Merge peers as they arrive; stop early when enough peers for metadata (e.g. ≥ 5) or deadline hits (e.g. 45s).
+- Add overall timeout so resolve never hangs forever.
+
+**Acceptance:**
+- [ ] DHT runs even while trackers are in flight
+- [ ] Resolve fails fast with a clear error after deadline
+
+### Phase 2: Metadata exchange robustness
+
+#### Task 6: Try metadata peers concurrently
+**Files:** `src/magnet-resolver.js`, `src/metadata-downloader.js`
+
+- Instead of serial peer attempts, try up to N peers in parallel (e.g. 5).
+- First successful metadata wins; cancel others.
+- Slightly longer per-peer timeout (15–20s).
+
+**Acceptance:**
+- [ ] Metadata succeeds if any one of several peers has it
+- [ ] Mock tests still pass
+
+### Phase 3: Observability (so failures are debuggable)
+
+#### Task 7: Emit JSON status events during magnet resolve
+**Files:** `src/cli.js`, `src/magnet-resolver.js`, TUI event parser
+
+Events like:
+```json
+{"type":"status","id":"...","message":"Resolving magnet…"}
+{"type":"status","id":"...","message":"Found 12 peers, downloading metadata…"}
+```
+
+**Acceptance:**
+- [ ] TUI shows resolving status before download progress
+- [ ] CLI `--json` emits status lines
+
+#### Task 8: TUI surfaces real CLI error on failure
+**Files:** `tui/torl/model.go`, `tui/main.go`
+
+- Capture last non-empty stderr lines from `torl-cli`.
+- On process exit error, report those lines (or joined message), not only `exit status 1`.
+
+**Acceptance:**
+- [ ] User sees e.g. `No peers found for magnet link` instead of bare exit status
+
+### Phase 4: Verify and ship
+
+#### Task 9: Integration tests
+- Tracker empty-response fallback
+- Magnet stub uses full announce-list
+- Parallel peer collection unit test with mocks
+- Metadata concurrent attempt test (optional mock)
+
+#### Task 10: Manual verification on user machine
+```bash
+torl-cli --json 'magnet:?xt=urn:btih:2f672fdde867b2ec9db189259c38376db3f6d545&tr=...'
+torl 'magnet:...'
+```
+Expect: status events → start event with torrent name → progress.
+
+#### Task 11: Version bump + release
+- Publish as `torl-client@1.1.0` (behavior fix worth minor bump)
+
+## Implementation Order
+
+| Order | Task | Why first |
+|------:|------|-----------|
+| 1 | Task 1 — empty tracker fallback | Most likely why swarm is missed |
+| 2 | Task 3 — announce-list key | Breaks post-metadata download too |
+| 3 | Task 4 — left=-1 | Improves tracker peer returns |
+| 4 | Task 5 — parallel trackers+DHT | Speed + DHT contribution |
+| 5 | Task 2 — parallel tracker batches | Speed |
+| 6 | Task 6 — parallel metadata | Finish resolve reliably |
+| 7 | Task 8 — TUI real errors | Debuggability |
+| 8 | Task 7 — status events | UX |
+| 9 | Tasks 9–11 — tests + ship | |
+
+## Success Criteria
+
+- [ ] Same magnet that works in KTorrent reaches `type:start` with a real torrent name in torl
+- [ ] Progress events appear and pieces download
+- [ ] Failure messages name the actual problem (no peers / metadata / etc.)
+- [ ] All existing tests pass; new tests cover empty-tracker fallback and announce-list
+
+## Risks
+
+| Risk | Mitigation |
+|------|------------|
+| Aggressive parallel announces rate-limited by trackers | Cap concurrency (3–5); jitter |
+| DHT still weak vs full clients | Parallel + longer deadline; trackers carry most weight |
+| Breaking existing single-tracker torrents | Keep announce path; add tests |
+
+## Out of scope (later)
+
+- Full DHT routing table persistence
+- uTP / IPv6
+- Magnet v2 hybrid only
+- WebTorrent / browser trackers

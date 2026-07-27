@@ -99,36 +99,36 @@
 
 ## TUI Pause/Resume and Per-Torrent Control
 
-See `tasks/plan.md` for the full plan.
+- [x] Graceful shutdown + periodic state save (SIGTERM/SIGINT).
+- [x] One `torl-cli` process per torrent in the TUI.
+- [x] Cursor selection + per-torrent pause/resume (`p`).
+- [x] Global quit pauses all downloads.
+- [x] Published through `torl-client@1.0.8` / `@1.0.9`.
 
-### Phase 1: CLI graceful shutdown and periodic state save
-- [ ] Add SIGTERM/SIGINT handlers to `bin/torl-cli.js`.
-- [ ] Extend `src/download.js` to shut down cleanly and save state.
-- [ ] Add periodic state save during download.
-- [ ] Add/update Node tests.
+## Magnet Download Reliability
 
-### Phase 2: TUI process-per-torrent refactor
-- [ ] Replace single `spawnTorl()` with a process per input.
-- [ ] Route events per process into the shared `Downloads` map.
-- [ ] Add Go tests.
+See `tasks/plan.md` for full analysis and plan.
 
-### Phase 3: Selection and per-torrent pause/resume
-- [ ] Add `cursor` and `↑`/`↓` selection.
-- [ ] Implement `p` to pause/resume the selected torrent.
-- [ ] Add `Paused` / `Resuming` badges.
-- [ ] Add Go tests.
+### Phase 1: Peer discovery (must-have)
+- [ ] Task 1: Do not stop tracker fallback on empty peer lists.
+- [ ] Task 2: Parallel tracker queries with short timeout.
+- [ ] Task 3: Fix magnet → torrent `announce-list` key (not `announceList`).
+- [ ] Task 4: Announce `left=-1` when size unknown (magnet stub).
+- [ ] Task 5: Parallelize trackers + DHT in magnet resolve; overall deadline.
 
-### Phase 4: Global graceful quit
-- [ ] Graceful shutdown for all processes on `q` / `Ctrl+C`.
-- [ ] Show "Saving progress..." while shutting down.
-- [ ] Add Go tests.
+### Phase 2: Metadata exchange
+- [ ] Task 6: Try metadata peers concurrently (first success wins).
 
-### Phase 5: Integration, docs, and release
-- [ ] Full test suite.
-- [ ] Update README.md and AGENTS.md.
-- [ ] Bump version, create release, publish to npm.
+### Phase 3: Observability
+- [ ] Task 7: Emit JSON status events during magnet resolve.
+- [ ] Task 8: TUI surfaces real CLI stderr, not bare `exit status 1`.
+
+### Phase 4: Verify and ship
+- [ ] Task 9: Integration tests for empty-tracker fallback + announce-list.
+- [ ] Task 10: Manual magnet test on user machine.
+- [ ] Task 11: Publish `torl-client@1.1.0`.
 
 ## Plan
 
-- `tasks/plan.md` documents Phase 4 (NAT traversal).
-- Magnet link support, the Go TUI, and multi-torrent CLI were added incrementally without separate plan files.
+- `tasks/plan.md` is the active plan (Magnet Download Reliability).
+- Prior plans (pause/resume, NAT) are completed.
