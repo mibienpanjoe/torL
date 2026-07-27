@@ -3,3 +3,4 @@ node_modules
 *.tgz
 tui/torl-tui
 tui/torl-tui.exe
+tui/tui/
