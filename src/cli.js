@@ -20,7 +20,8 @@ export function parseArgs(argv) {
     json: false,
     help: false,
     version: false,
-    input: null
+    concurrency: 1,
+    inputs: []
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -39,12 +40,20 @@ export function parseArgs(argv) {
         throw new Error(`Option ${arg} requires a value`);
       }
       options.output = path.resolve(value);
+    } else if (arg === '-c' || arg === '--concurrency') {
+      const value = args[++i];
+      if (value === undefined) {
+        throw new Error(`Option ${arg} requires a value`);
+      }
+      const n = parseInt(value, 10);
+      if (isNaN(n) || n < 1) {
+        throw new Error(`Invalid concurrency value: ${value}`);
+      }
+      options.concurrency = n;
     } else if (arg.startsWith('-')) {
       throw new Error(`Unknown option: ${arg}`);
-    } else if (!options.input) {
-      options.input = arg;
     } else {
-      throw new Error(`Unexpected argument: ${arg}`);
+      options.inputs.push(arg);
     }
   }
 
@@ -52,14 +61,15 @@ export function parseArgs(argv) {
 }
 
 export function getUsage() {
-  return `Usage: torl <torrent-file|magnet-link> [options]
+  return `Usage: torl <torrent-file|magnet-link>... [options]
 
 Options:
-  -o, --output <dir>   Output directory (default: current directory)
-  -q, --quiet          Suppress progress output
-  --json               Emit machine-readable JSON events on stdout
-  -h, --help           Show this help message
-  -v, --version        Show version
+  -o, --output <dir>       Output directory (default: current directory)
+  -c, --concurrency <n>    Max simultaneous downloads (default: 1)
+  -q, --quiet              Suppress progress output
+  --json                   Emit machine-readable JSON events on stdout
+  -h, --help               Show this help message
+  -v, --version            Show version
 `;
 }
 
@@ -76,7 +86,7 @@ export async function run(argv = process.argv) {
     return 0;
   }
 
-  if (!options.input) {
+  if (options.inputs.length === 0) {
     console.error(getUsage());
     throw new Error('Missing torrent file or magnet link');
   }
@@ -85,45 +95,127 @@ export async function run(argv = process.argv) {
     throw new Error('Cannot use --json and --quiet together');
   }
 
-  const isMagnet = options.input.startsWith('magnet:');
+  await fs.promises.mkdir(options.output, { recursive: true });
+
+  const progressLogger = options.json || options.quiet
+    ? null
+    : new MultiProgressLogger();
+
+  const results = await downloadAll(options.inputs, options, progressLogger);
+
+  const failures = results.filter(r => !r.success);
+  if (failures.length > 0) {
+    const messages = failures.map(f => `${f.input}: ${f.error.message}`).join('; ');
+    throw new Error(`${failures.length} download(s) failed: ${messages}`);
+  }
+
+  return 0;
+}
+
+class MultiProgressLogger {
+  constructor() {
+    this.states = new Map();
+    this.lastPrinted = new Map();
+  }
+
+  update(input, event) {
+    if (event.type !== 'progress') return;
+    this.states.set(input, event);
+    const percent = Math.floor(event.percent * 100);
+    const last = this.lastPrinted.get(input) || -1;
+    if (percent > last || event.activePeers !== (this.states.get(input)?.activePeers)) {
+      this.lastPrinted.set(input, percent);
+      this.print(input, event);
+    }
+  }
+
+  print(input, event) {
+    const percent = (event.percent * 100).toFixed(1);
+    const name = path.basename(input).slice(0, 30);
+    const line = `[${name.padEnd(30)}] ${percent.padStart(5)}% (${formatBytes(event.downloaded)}/${formatBytes(event.total)}) peers: ${event.activePeers}`;
+    console.log(line);
+  }
+
+  complete(input, rootPath) {
+    console.log(`[${path.basename(input).slice(0, 30).padEnd(30)}] Complete: ${rootPath}`);
+  }
+}
+
+export async function downloadAll(inputs, options, progressLogger, downloadOneFn = downloadOne) {
+  const results = [];
+  let index = 0;
+
+  async function worker() {
+    while (index < inputs.length) {
+      const input = inputs[index++];
+      try {
+        const rootPath = await downloadOneFn(input, options, progressLogger);
+        if (progressLogger) {
+          progressLogger.complete(input, rootPath);
+        }
+        results.push({ input, success: true, path: rootPath });
+      } catch (err) {
+        results.push({ input, success: false, error: err });
+      }
+    }
+  }
+
+  const workers = Array.from({ length: options.concurrency }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
+async function downloadOne(input, options, progressLogger) {
+  const isMagnet = input.startsWith('magnet:');
   const torrent = isMagnet
-    ? await resolveMagnet(parseMagnetLink(options.input))
-    : torrentParser.open(options.input);
+    ? await resolveMagnet(parseMagnetLink(input))
+    : torrentParser.open(input);
 
   const targetName = isMagnet
     ? torrent.name
     : torrent.info.name.toString('utf8');
   const rootPath = path.join(options.output, targetName);
 
-  await fs.promises.mkdir(options.output, { recursive: true });
+  const id = input;
 
   if (options.json) {
     const totalPieces = torrent.info.pieces ? torrent.info.pieces.length / 20 : 0;
-    emitJson({ type: 'start', name: targetName, total: torrentSize(torrent), totalPieces });
+    emitJson({ type: 'start', id, name: targetName, total: torrentSize(torrent), totalPieces });
   }
 
-  const log = options.quiet ? () => {} : (msg) => console.log(msg);
+  const log = options.quiet ? () => {} : (msg) => console.log(`[${path.basename(input)}] ${msg}`);
   const onProgress = options.json
-    ? (event) => emitJson(event)
+    ? (event) => emitJson({ ...event, id })
     : (event) => {
-        if (event.type === 'progress') {
-          const percent = (event.percent * 100).toFixed(1);
-          log(`Progress: ${percent}% (${event.downloaded}/${event.total}) peers: ${event.activePeers}`);
+        if (progressLogger) {
+          progressLogger.update(id, event);
         }
       };
 
   await download(torrent, rootPath, { log, onProgress });
 
   if (options.json) {
-    emitJson({ type: 'complete', path: rootPath });
-  } else {
-    log(`Download complete: ${rootPath}`);
+    emitJson({ type: 'complete', id, path: rootPath });
   }
-  return 0;
+
+  return rootPath;
 }
 
 function emitJson(event) {
   console.log(JSON.stringify(event));
+}
+
+function formatBytes(n) {
+  if (n >= 1 << 30) {
+    return `${(n / (1 << 30)).toFixed(2)} GiB`;
+  }
+  if (n >= 1 << 20) {
+    return `${(n / (1 << 20)).toFixed(2)} MiB`;
+  }
+  if (n >= 1 << 10) {
+    return `${(n / (1 << 10)).toFixed(2)} KiB`;
+  }
+  return `${n} B`;
 }
 
 export default run;

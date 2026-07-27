@@ -29,7 +29,7 @@
 - `src/metadata-downloader.js` downloads the `.torrent` info dictionary from a peer via the BEP 10 extension protocol + BEP 9 metadata exchange.
 - `src/magnet-resolver.js` resolves a magnet link to a full torrent object by discovering peers (trackers + DHT) and downloading metadata.
 - `index.js` is the CLI entry point (with `#!/usr/bin/env node`) and accepts either a `.torrent` file path or a `magnet:` link; use `-o <dir>` to set the output directory.
-- `src/cli.js` implements the command-line interface with `--help`, `--version`, `--output`, `--quiet`, and `--json` flags.
+- `src/cli.js` implements the command-line interface with `--help`, `--version`, `--output`, `--quiet`, `--json`, and `--concurrency` flags. It accepts multiple `.torrent` files or `magnet:` links and downloads them sequentially or concurrently.
 - `package.json` exposes the `torl` binary via `index.js` and declares Node.js `>=20.0.0` as the engine requirement.
 - `tui/` is a Go module with a Bubble Tea TUI (`torl-tui`) that spawns `torl --json` and displays progress, peers, and status. It accepts both `.torrent` files and `magnet:` links, builds to a single binary, and requires `torl` in `PATH` or a `--torl-path` override. Running `npm install` will build `torl-tui` automatically if Go is installed; otherwise use `npm run build-tui` after installing Go.
 - `tests/mocks/` contains a local UDP tracker, TCP peer, DHT node, UPnP gateway, NAT-PMP gateway, and metadata peer for fast, deterministic integration tests.

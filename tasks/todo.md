@@ -50,7 +50,17 @@
 - [x] Build `torl-tui` binary and verify it starts.
 - [x] Update `AGENTS.md` and `.gitignore`.
 
+## Multi-Torrent CLI
+
+- [x] Accept multiple `.torrent` files and `magnet:` links as positional arguments.
+- [x] Add `--concurrency` / `-c` flag to control simultaneous downloads.
+- [x] Add `MultiProgressLogger` for per-download progress lines in CLI mode.
+- [x] Include `id` in JSON progress events so multi-download consumers can distinguish torrents.
+- [x] Add `downloadAll` helper and unit tests for sequential/concurrent/failure handling.
+- [x] Update `AGENTS.md`.
+- [x] All tests pass.
+
 ## Plan
 
 - `tasks/plan.md` documents Phase 4 (NAT traversal).
-- Magnet link support and the Go TUI were added incrementally without separate plan files.
+- Magnet link support, the Go TUI, and multi-torrent CLI were added incrementally without separate plan files.
