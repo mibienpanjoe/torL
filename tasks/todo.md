@@ -68,8 +68,8 @@
 - [x] Update `bin/torl-tui.js` to locate the binary on Windows (`torl-tui.exe`).
 - [x] Add `.github/workflows/release-tui.yml` to build and upload TUI binaries for Linux, macOS, and Windows (x64 and arm64) on release.
 - [x] Add tests for install-script helpers and the download fallback.
-- [ ] Verify `npm install` works with and without Go, and `npm publish` succeeds.
-- [ ] Publish `torl@1.0.0` to npm.
+- [x] Verify `npm install` works with and without Go, and `npm publish` succeeds.
+- [x] Publish `torl-client@1.0.0` to npm (renamed from `torl` because npm rejected the original name as too similar to existing packages).
 
 ## Plan
 
