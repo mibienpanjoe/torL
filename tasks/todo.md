@@ -78,6 +78,13 @@
 - [x] Update README and AGENTS.md.
 - [x] Publish `torl-client@1.0.1` to npm.
 
+## v1.0.2
+
+- [x] Add 15s timeout to tracker requests and make tracker failures non-fatal.
+- [x] Support `announce-list` fallback so dead trackers do not crash downloads.
+- [x] Add tracker fallback test.
+- [x] Publish `torl-client@1.0.2` to npm.
+
 ## Plan
 
 - `tasks/plan.md` documents Phase 4 (NAT traversal).
