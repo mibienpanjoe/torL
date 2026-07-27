@@ -78,7 +78,11 @@ Then open `http://localhost:7681`:
   <img src="assets/tui-ttyd-preview.png" alt="torL TUI via ttyd" width="800">
 </p>
 
-Inside the TUI, press `q` or `Ctrl+C` to quit.
+Inside the TUI:
+- `↑` / `↓` select a torrent.
+- `p` toggles pause/resume for the selected torrent.
+- `q` or `Ctrl+C` pauses all active downloads and exits.
+- Downloaded progress is saved automatically; re-running the same torrent resumes where it left off.
 
 ## CLI Usage
 

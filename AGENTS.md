@@ -22,7 +22,7 @@
 - `src/torrent-parser.js` decodes bencoded torrent files and converts `Uint8Array` byte strings to `Buffer` for compatibility with the rest of the code.
 - `src/tracker.js` supports both UDP and HTTP trackers and accepts an optional `AbortSignal`.
 - `src/dht.js` implements a minimal BitTorrent Mainline DHT (BEP 5) client with bootstrap, iterative `get_peers` lookup, and peer discovery without trackers.
-- `src/download.js` returns a `Promise`, manages peer sockets as a pool with reconnection/backoff, periodically re-announces to the tracker, uses a global `RarityMap` for rarest-first piece selection, and falls back to DHT when no tracker is present.
+- `src/download.js` returns a `Promise`, manages peer sockets as a pool with reconnection/backoff, periodically re-announces to the tracker, uses a global `RarityMap` for rarest-first piece selection, falls back to DHT when no tracker is present, and supports an `AbortSignal` for graceful shutdown (saves `.torl.state` and exits cleanly). Periodic state saves run every 30s.
 - `src/Queue.js` stores the pieces each peer has and requests the rarest needed piece first.
 - `src/RarityMap.js` tracks global piece availability across connected peers.
 - `src/state.js` and `src/verify.js` support pause/resume: a `<target>.torl.state` file stores the completed bitfield, and existing files are SHA1-verified on restart.
@@ -34,7 +34,7 @@
 - `bin/torl-cli.js` is the headless CLI entry point; `src/cli.js` implements the downloader logic with `--help`, `--version`, `--output`, `--quiet`, `--json`, and `--concurrency` flags. It accepts multiple `.torrent` files or `magnet:` links and downloads them sequentially or concurrently.
 - The default output directory for both `torl` and `torl-cli` is the user's `Downloads` folder (`$HOME/Downloads` or `%USERPROFILE%\Downloads`), falling back to the current working directory.
 - `package.json` exposes the `torl` binary via `index.js` and declares Node.js `>=20.0.0` as the engine requirement.
-- `tui/` is a Go module with a Bubble Tea TUI (`torl-tui`) that spawns `torl --json` and displays progress, peers, and status. It accepts multiple `.torrent` files and `magnet:` links, builds to a single binary, and requires `torl` in `PATH` or a `--torl-path` override. `npm install` downloads a prebuilt `torl-tui` binary from the GitHub release matching the package version; if the download fails, it falls back to building from source when Go is installed.
+- `tui/` is a Go module with a Bubble Tea TUI (`torl-tui`) that spawns one `torl-cli` process per torrent. It accepts multiple `.torrent` files and `magnet:` links, builds to a single binary, and requires `torl` in `PATH` or a `--torl-path` override. Pause/resume sends SIGTERM to the individual process; the CLI saves `.torl.state` and exits gracefully. `npm install` downloads a prebuilt `torl-tui` binary from the GitHub release matching the package version; if the download fails, it falls back to building from source when Go is installed.
 - `tests/mocks/` contains a local UDP tracker, TCP peer, DHT node, UPnP gateway, NAT-PMP gateway, and metadata peer for fast, deterministic integration tests.
 
 ## Dependencies
