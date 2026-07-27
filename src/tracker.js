@@ -17,6 +17,13 @@ export function getPeers(torrent, callback, signal) {
   tryTrackers(torrent, urls, callback, signal);
 }
 
+function computeTotalSize(torrent) {
+  if (torrent.info.files) {
+    return torrent.info.files.reduce((sum, f) => sum + f.length, 0);
+  }
+  return torrent.info.length || 0;
+}
+
 function getAnnounceUrls(torrent) {
   const urls = [];
   if (torrent['announce-list'] && Array.isArray(torrent['announce-list'])) {
@@ -199,7 +206,12 @@ function buildAnnounceReq(connId, torrent, port = 6881) {
   // downloaded
   Buffer.alloc(8).copy(buf, 56);
   // left
-  torrentParser.size(torrent).copy(buf, 64);
+  const totalSize = computeTotalSize(torrent);
+  if (totalSize === 0) {
+    Buffer.alloc(8, 0xff).copy(buf, 64);
+  } else {
+    torrentParser.size(torrent).copy(buf, 64);
+  }
   // uploaded
   Buffer.alloc(8).copy(buf, 72);
   // event
@@ -246,9 +258,10 @@ function parseAnnounceResp(resp) {
 async function httpGetPeers(torrent, url, onDone, onError, signal) {
   const infoHash = torrent.infoHash || torrentParser.infoHash(torrent);
   const peerId = util.genId();
-  const left = torrent.info.files
+  let left = torrent.info.files
     ? torrent.info.files.reduce((sum, f) => sum + f.length, 0)
     : (torrent.info.length || 0);
+  if (left === 0) left = -1;
 
   const fullUrl = buildHttpUrl(url, infoHash, peerId, left);
 
