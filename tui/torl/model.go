@@ -58,6 +58,7 @@ func NewModel(torlPath string, inputs []string, output string) *Model {
 		Downloads:    downloads,
 		pendingCount: len(inputs),
 		processes:    make(map[string]*exec.Cmd),
+		stderrBufs:   make(map[string]string),
 		spinner:      sp,
 		progress:     prog,
 		messages:     []string{},
@@ -97,6 +98,7 @@ type Model struct {
 	processErr   error
 	cursor       int
 	processes    map[string]*exec.Cmd
+	stderrBufs   map[string]string
 
 	spinner  spinner.Model
 	progress progress.Model
@@ -130,6 +132,7 @@ func (m *Model) spawnProcess(input string) tea.Cmd {
 		if err != nil {
 			m.mu.Lock()
 			delete(m.processes, input)
+			delete(m.stderrBufs, input)
 			m.mu.Unlock()
 			return procErrMsg{input: input, err: err}
 		}
@@ -137,6 +140,7 @@ func (m *Model) spawnProcess(input string) tea.Cmd {
 		if err != nil {
 			m.mu.Lock()
 			delete(m.processes, input)
+			delete(m.stderrBufs, input)
 			m.mu.Unlock()
 			return procErrMsg{input: input, err: err}
 		}
@@ -144,11 +148,12 @@ func (m *Model) spawnProcess(input string) tea.Cmd {
 		if err := cmd.Start(); err != nil {
 			m.mu.Lock()
 			delete(m.processes, input)
+			delete(m.stderrBufs, input)
 			m.mu.Unlock()
 			return procErrMsg{input: input, err: err}
 		}
 
-		go m.readStderr(stderr)
+		go m.readStderr(stderr, input)
 
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
@@ -166,20 +171,24 @@ func (m *Model) spawnProcess(input string) tea.Cmd {
 
 		if err := scanner.Err(); err != nil {
 			m.mu.Lock()
+			lastStderr := m.stderrBufs[input]
+			delete(m.stderrBufs, input)
 			delete(m.processes, input)
 			m.mu.Unlock()
-			return procErrMsg{input: input, err: err}
+			return procErrMsg{input: input, err: err, stderr: lastStderr}
 		}
 
 		if err := cmd.Wait(); err != nil {
 			m.mu.Lock()
 			shouldIgnore := m.Downloads[input] != nil && m.Downloads[input].Paused
+			lastStderr := m.stderrBufs[input]
+			delete(m.stderrBufs, input)
 			delete(m.processes, input)
 			m.mu.Unlock()
 			if shouldIgnore {
-				return nil // ignored — user paused
+				return nil
 			}
-			return procErrMsg{input: input, err: err}
+			return procErrMsg{input: input, err: err, stderr: lastStderr}
 		}
 
 		m.mu.Lock()
@@ -189,10 +198,14 @@ func (m *Model) spawnProcess(input string) tea.Cmd {
 	}
 }
 
-func (m *Model) readStderr(stderr io.ReadCloser) {
+func (m *Model) readStderr(stderr io.ReadCloser, input string) {
 	scanner := bufio.NewScanner(stderr)
 	for scanner.Scan() {
-		m.appendMessage(scanner.Text())
+		line := scanner.Text()
+		m.mu.Lock()
+		m.stderrBufs[input] = line
+		m.mu.Unlock()
+		m.appendMessage(line)
 	}
 }
 
@@ -299,8 +312,9 @@ func peerActionIcon(action string) string {
 }
 
 type procErrMsg struct {
-	input string
-	err   error
+	input  string
+	err    error
+	stderr string
 }
 
 type procDoneMsg struct {
@@ -335,10 +349,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		d := m.download(msg.input)
 		if d.Paused {
 			delete(m.processes, msg.input)
+			delete(m.stderrBufs, msg.input)
 			m.mu.Unlock()
 			return m, nil
 		}
-		m.processErr = fmt.Errorf("torrent %s: %w", path.Base(msg.input), msg.err)
+		if msg.stderr != "" {
+			m.processErr = fmt.Errorf("torrent %s: %s", path.Base(msg.input), msg.stderr)
+		} else {
+			m.processErr = fmt.Errorf("torrent %s: %w", path.Base(msg.input), msg.err)
+		}
 		d.Err = msg.err
 		d.Status = "Error"
 		m.pendingCount--

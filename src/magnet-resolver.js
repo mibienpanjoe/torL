@@ -27,18 +27,19 @@ export async function resolveMagnet(magnet, options = {}) {
   }
 
   const errors = [];
-  for (const peer of peers) {
-    try {
-      const { info, metadata } = await downloadMetadata(peer, magnet.infoHash, {
-        timeout: METADATA_TIMEOUT
-      });
-      return buildTorrentFromMagnet(magnet, info, metadata);
-    } catch (err) {
-      errors.push(err.message);
-    }
-  }
 
-  throw new Error('Failed to download metadata from any peer: ' + errors.join('; '));
+  // Try metadata peers concurrently. First success wins.
+  const metaPromises = peers.map(peer =>
+    downloadMetadata(peer, magnet.infoHash, { timeout: METADATA_TIMEOUT })
+      .then(({ info, metadata }) => buildTorrentFromMagnet(magnet, info, metadata))
+      .catch(err => { errors.push(err.message); throw err; })
+  );
+
+  try {
+    return await Promise.any(metaPromises);
+  } catch (e) {
+    throw new Error('Failed to download metadata from any peer: ' + errors.join('; '));
+  }
 }
 
 function buildTorrentStub(magnet) {
