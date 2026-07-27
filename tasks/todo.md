@@ -71,6 +71,13 @@
 - [x] Verify `npm install` works with and without Go, and `npm publish` succeeds.
 - [x] Publish `torl-client@1.0.0` to npm (renamed from `torl` because npm rejected the original name as too similar to existing packages).
 
+## v1.0.1
+
+- [x] Make `torl` launch the TUI and `torl-cli` the headless downloader.
+- [x] Default output directory to `~/Downloads` / `%USERPROFILE%\Downloads`.
+- [x] Update README and AGENTS.md.
+- [x] Publish `torl-client@1.0.1` to npm.
+
 ## Plan
 
 - `tasks/plan.md` documents Phase 4 (NAT traversal).
