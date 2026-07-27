@@ -71,6 +71,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := model.ProcessErr(); err != nil {
+		fmt.Fprintf(os.Stderr, "Download failed: %v\n", err)
+		os.Exit(1)
+	}
+
 	if !model.Done() {
 		fmt.Fprintln(os.Stderr, "Download cancelled")
 		os.Exit(1)

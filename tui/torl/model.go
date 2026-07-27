@@ -86,9 +86,10 @@ type Model struct {
 	Inputs    []string
 	Output    string
 
-	mu        sync.Mutex
-	Downloads map[string]*Download
-	messages  []string
+	mu         sync.Mutex
+	Downloads  map[string]*Download
+	messages   []string
+	processErr error
 
 	spinner  spinner.Model
 	progress progress.Model
@@ -271,6 +272,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m, m.tick()
 	case errMsg:
+		m.mu.Lock()
+		m.processErr = msg.err
+		m.mu.Unlock()
 		m.appendMessage(msg.err.Error())
 		return m, tea.Quit
 	case doneMsg:
@@ -397,4 +401,11 @@ func (m *Model) Done() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.allDone()
+}
+
+// ProcessErr returns any error from the downloader process itself.
+func (m *Model) ProcessErr() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.processErr
 }
