@@ -6,6 +6,7 @@ import (
 )
 
 type Event struct {
+	ID             string  `json:"id,omitempty"`
 	Type           string  `json:"type"`
 	Name           string  `json:"name,omitempty"`
 	Total          int64   `json:"total,omitempty"`

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -22,14 +23,15 @@ var (
 	infoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#A3A3A3"))
 	activeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575"))
 	labelStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA"))
-	panelStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#874BFD")).Padding(1).Width(60)
+	panelStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#874BFD")).Padding(1).Width(70)
+	itemStyle    = lipgloss.NewStyle().Border(lipgloss.HiddenBorder()).Padding(0, 1).Width(66)
 	peerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280"))
 	footerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#737373")).MarginTop(1)
 )
 
 type tickMsg time.Time
 
-func NewModel(torlPath, input, output string) *Model {
+func NewModel(torlPath string, inputs []string, output string) *Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
@@ -37,38 +39,53 @@ func NewModel(torlPath, input, output string) *Model {
 	prog := progress.New(progress.WithDefaultGradient())
 	prog.Width = 50
 
+	downloads := make(map[string]*Download)
+	for _, input := range inputs {
+		downloads[input] = &Download{
+			ID:     input,
+			Status: "Starting",
+			Peers:  []string{},
+		}
+	}
+
 	return &Model{
-		TorlPath: torlPath,
-		Input:    input,
-		Output:   output,
-		Status:   "Starting",
-		spinner:  sp,
-		progress: prog,
-		Peers:    []string{},
-		messages: []string{},
+		TorlPath:  torlPath,
+		Inputs:    inputs,
+		Output:    output,
+		Downloads: downloads,
+		spinner:   sp,
+		progress:  prog,
+		messages:  []string{},
 	}
 }
 
-type Model struct {
-	TorlPath string
-	Input    string
-	Output   string
-
-	mu       sync.Mutex
-	Name     string
-	Total    int64
-	Downloaded int64
-	Percent  float64
+// Download holds state for a single torrent download.
+type Download struct {
+	ID              string
+	Name            string
+	Total           int64
+	Downloaded      int64
+	Percent         float64
 	CompletedPieces int
-	TotalPieces int
-	ActivePeers int
-	AvailablePeers int
-	Peers    []string
-	Err      error
-	Done     bool
-	Started  bool
-	Status   string
-	messages []string
+	TotalPieces     int
+	ActivePeers     int
+	AvailablePeers  int
+	Peers           []string
+	Status          string
+	Err             error
+	Done            bool
+	Started         bool
+}
+
+// Model manages the whole TUI and multiple downloads.
+type Model struct {
+	TorlPath  string
+	Inputs    []string
+	Output    string
+
+	mu        sync.Mutex
+	Downloads map[string]*Download
+	messages  []string
 
 	spinner  spinner.Model
 	progress progress.Model
@@ -90,7 +107,9 @@ func (m *Model) tick() tea.Cmd {
 
 func (m *Model) spawnTorl() tea.Cmd {
 	return func() tea.Msg {
-		cmd := exec.Command(m.TorlPath, m.Input, "--json", "-o", m.Output)
+		args := append([]string{}, m.Inputs...)
+		args = append(args, "--json", "-o", m.Output)
+		cmd := exec.Command(m.TorlPath, args...)
 		cmd.Env = os.Environ()
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -149,40 +168,69 @@ func (m *Model) appendMessage(msg string) {
 	}
 }
 
+func (m *Model) download(id string) *Download {
+	d, ok := m.Downloads[id]
+	if !ok {
+		d = &Download{ID: id, Status: "Unknown", Peers: []string{}}
+		m.Downloads[id] = d
+	}
+	return d
+}
+
 func (m *Model) handleEvent(event Event) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	d := m.download(event.ID)
+
 	switch event.Type {
 	case "start":
-		m.Started = true
-		m.Name = event.Name
-		m.Total = event.Total
-		m.TotalPieces = event.TotalPieces
-		m.Status = "Downloading"
+		d.Started = true
+		d.Name = event.Name
+		d.Total = event.Total
+		d.TotalPieces = event.TotalPieces
+		d.Status = "Downloading"
 	case "progress":
-		m.Downloaded = event.Downloaded
-		m.Total = event.Total
-		m.Percent = event.Percent
-		m.CompletedPieces = event.CompletedPieces
-		m.TotalPieces = event.TotalPieces
-		m.ActivePeers = event.ActivePeers
-		m.AvailablePeers = event.AvailablePeers
-		m.Status = "Downloading"
+		d.Downloaded = event.Downloaded
+		d.Total = event.Total
+		d.Percent = event.Percent
+		d.CompletedPieces = event.CompletedPieces
+		d.TotalPieces = event.TotalPieces
+		d.ActivePeers = event.ActivePeers
+		d.AvailablePeers = event.AvailablePeers
+		d.Status = "Downloading"
 	case "peer":
 		peer := fmt.Sprintf("%s %s", peerActionIcon(event.Action), event.Peer)
-		m.Peers = append(m.Peers, peer)
-		if len(m.Peers) > 20 {
-			m.Peers = m.Peers[1:]
+		d.Peers = append(d.Peers, peer)
+		if len(d.Peers) > 10 {
+			d.Peers = d.Peers[1:]
 		}
 	case "complete":
-		m.Done = true
-		m.Status = "Complete"
-		m.Percent = 1.0
+		d.Done = true
+		d.Status = "Complete"
+		d.Percent = 1.0
 	case "error":
-		m.Err = fmt.Errorf(event.Message)
-		m.Status = "Error"
+		d.Err = fmt.Errorf(event.Message)
+		d.Status = "Error"
 	}
+}
+
+func (m *Model) allDone() bool {
+	for _, d := range m.Downloads {
+		if !d.Done && d.Err == nil {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Model) anyError() error {
+	for _, d := range m.Downloads {
+		if d.Err != nil {
+			return d.Err
+		}
+	}
+	return nil
 }
 
 func peerActionIcon(action string) string {
@@ -204,12 +252,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m, m.tick()
 	case errMsg:
-		m.Err = msg.err
-		m.Status = "Error"
+		m.appendMessage(msg.err.Error())
 		return m, tea.Quit
 	case doneMsg:
-		m.Done = true
-		m.Status = "Complete"
 		return m, tea.Quit
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -231,49 +276,49 @@ func (m *Model) View() string {
 	b.WriteString(titleStyle.Render("torl"))
 	b.WriteString("\n\n")
 
-	if m.Name != "" {
-		b.WriteString(labelStyle.Render("File: ") + m.Name + "\n")
-	}
-	b.WriteString(labelStyle.Render("Status: ") + statusBadge(m.Status) + "\n")
-
-	if m.Status == "Starting" {
-		b.WriteString(fmt.Sprintf("\n%s Connecting to peers...\n", m.spinner.View()))
-	} else {
-		b.WriteString("\n" + m.progress.ViewAs(m.Percent) + "\n")
-		b.WriteString(infoStyle.Render(fmt.Sprintf("%.1f%%  %s / %s  %d / %d pieces",
-			m.Percent*100,
-			formatBytes(m.Downloaded),
-			formatBytes(m.Total),
-			m.CompletedPieces,
-			m.TotalPieces)) + "\n")
-	}
-
-	b.WriteString("\n" + labelStyle.Render("Peers") + "\n")
-	b.WriteString(fmt.Sprintf("  Active: %s  Available: %s\n",
-		activeStyle.Render(fmt.Sprintf("%d", m.ActivePeers)),
-		infoStyle.Render(fmt.Sprintf("%d", m.AvailablePeers))))
-
-	if len(m.Peers) > 0 {
+	for _, input := range m.Inputs {
+		d := m.Downloads[input]
+		b.WriteString(m.renderDownload(d))
 		b.WriteString("\n")
-		for _, peer := range lastN(m.Peers, 5) {
-			b.WriteString("  " + peerStyle.Render(peer) + "\n")
-		}
 	}
 
 	if len(m.messages) > 0 {
-		b.WriteString("\n" + labelStyle.Render("Messages") + "\n")
+		b.WriteString(labelStyle.Render("Messages") + "\n")
 		for _, msg := range m.messages {
 			b.WriteString("  " + infoStyle.Render(truncate(msg, 50)) + "\n")
 		}
+		b.WriteString("\n")
 	}
 
-	if m.Err != nil {
-		b.WriteString("\n" + errorStyle.Render("Error: "+m.Err.Error()) + "\n")
-	}
-
-	b.WriteString("\n" + footerStyle.Render("Press 'q' or Ctrl+C to quit"))
+	b.WriteString(footerStyle.Render("Press 'q' or Ctrl+C to quit"))
 
 	return panelStyle.Render(b.String())
+}
+
+func (m *Model) renderDownload(d *Download) string {
+	var b strings.Builder
+
+	name := d.Name
+	if name == "" {
+		name = path.Base(d.ID)
+	}
+	b.WriteString(labelStyle.Render("File: ") + name + "\n")
+	b.WriteString(labelStyle.Render("Status: ") + statusBadge(d.Status) + "\n")
+
+	if d.Status == "Starting" {
+		b.WriteString(fmt.Sprintf("\n%s Connecting to peers...\n", m.spinner.View()))
+	} else {
+		b.WriteString("\n" + m.progress.ViewAs(d.Percent) + "\n")
+		b.WriteString(infoStyle.Render(fmt.Sprintf("%.1f%%  %s / %s  %d / %d pieces  peers: %d",
+			d.Percent*100,
+			formatBytes(d.Downloaded),
+			formatBytes(d.Total),
+			d.CompletedPieces,
+			d.TotalPieces,
+			d.ActivePeers)) + "\n")
+	}
+
+	return itemStyle.Render(b.String())
 }
 
 func statusBadge(status string) string {
@@ -314,4 +359,18 @@ func lastN(items []string, n int) []string {
 		return items
 	}
 	return items[len(items)-n:]
+}
+
+// Err returns any download error.
+func (m *Model) Err() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.anyError()
+}
+
+// Done returns true if all downloads are finished or errored.
+func (m *Model) Done() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.allDone()
 }

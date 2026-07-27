@@ -7,61 +7,92 @@ import (
 )
 
 func TestParseEventStart(t *testing.T) {
-	line := []byte(`{"type":"start","name":"test.txt","total":13}`)
+	line := []byte(`{"type":"start","id":"file.torrent","name":"test.txt","total":13}`)
 	event, err := ParseEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event.Type != "start" || event.Name != "test.txt" || event.Total != 13 {
+	if event.Type != "start" || event.ID != "file.torrent" || event.Name != "test.txt" || event.Total != 13 {
 		t.Fatalf("unexpected event: %+v", event)
 	}
 }
 
 func TestParseEventProgress(t *testing.T) {
-	line := []byte(`{"type":"progress","downloaded":13,"total":13,"percent":1,"completedPieces":1,"totalPieces":1,"activePeers":1,"availablePeers":0}`)
+	line := []byte(`{"type":"progress","id":"file.torrent","downloaded":13,"total":13,"percent":1,"completedPieces":1,"totalPieces":1,"activePeers":1,"availablePeers":0}`)
 	event, err := ParseEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event.Type != "progress" || event.Percent != 1 || event.ActivePeers != 1 {
+	if event.Type != "progress" || event.ID != "file.torrent" || event.Percent != 1 || event.ActivePeers != 1 {
 		t.Fatalf("unexpected event: %+v", event)
 	}
 }
 
 func TestModelStartEvent(t *testing.T) {
-	m := NewModel("torl", "file.torrent", ".")
-	m.handleEvent(Event{Type: "start", Name: "test.txt", Total: 100})
-	if m.Name != "test.txt" || m.Total != 100 || !m.Started {
-		t.Fatalf("model not updated: %+v", m)
+	m := NewModel("torl", []string{"file.torrent"}, ".")
+	m.handleEvent(Event{Type: "start", ID: "file.torrent", Name: "test.txt", Total: 100})
+	d := m.Downloads["file.torrent"]
+	if d.Name != "test.txt" || d.Total != 100 || !d.Started {
+		t.Fatalf("model not updated: %+v", d)
 	}
 }
 
 func TestModelProgressEvent(t *testing.T) {
-	m := NewModel("torl", "file.torrent", ".")
-	m.handleEvent(Event{Type: "progress", Downloaded: 50, Total: 100, Percent: 0.5, CompletedPieces: 1, TotalPieces: 2, ActivePeers: 3, AvailablePeers: 4})
-	if m.Downloaded != 50 || m.Percent != 0.5 || m.ActivePeers != 3 {
-		t.Fatalf("model not updated: %+v", m)
+	m := NewModel("torl", []string{"file.torrent"}, ".")
+	m.handleEvent(Event{Type: "progress", ID: "file.torrent", Downloaded: 50, Total: 100, Percent: 0.5, CompletedPieces: 1, TotalPieces: 2, ActivePeers: 3, AvailablePeers: 4})
+	d := m.Downloads["file.torrent"]
+	if d.Downloaded != 50 || d.Percent != 0.5 || d.ActivePeers != 3 {
+		t.Fatalf("model not updated: %+v", d)
 	}
 }
 
 func TestModelCompleteEvent(t *testing.T) {
-	m := NewModel("torl", "file.torrent", ".")
-	m.handleEvent(Event{Type: "complete"})
-	if !m.Done || m.Status != "Complete" {
-		t.Fatalf("model not complete: %+v", m)
+	m := NewModel("torl", []string{"file.torrent"}, ".")
+	m.handleEvent(Event{Type: "complete", ID: "file.torrent"})
+	d := m.Downloads["file.torrent"]
+	if !d.Done || d.Status != "Complete" {
+		t.Fatalf("model not complete: %+v", d)
 	}
 }
 
 func TestModelErrorEvent(t *testing.T) {
-	m := NewModel("torl", "file.torrent", ".")
-	m.handleEvent(Event{Type: "error", Message: "boom"})
-	if m.Err == nil || m.Status != "Error" {
-		t.Fatalf("model error not set: %+v", m)
+	m := NewModel("torl", []string{"file.torrent"}, ".")
+	m.handleEvent(Event{Type: "error", ID: "file.torrent", Message: "boom"})
+	d := m.Downloads["file.torrent"]
+	if d.Err == nil || d.Status != "Error" {
+		t.Fatalf("model error not set: %+v", d)
+	}
+}
+
+func TestModelMultiDownloadRouting(t *testing.T) {
+	m := NewModel("torl", []string{"a.torrent", "b.torrent"}, ".")
+	m.handleEvent(Event{Type: "start", ID: "a.torrent", Name: "a.txt", Total: 100})
+	m.handleEvent(Event{Type: "start", ID: "b.torrent", Name: "b.txt", Total: 200})
+	if m.Downloads["a.torrent"].Name != "a.txt" {
+		t.Fatalf("a.torrent not routed: %+v", m.Downloads["a.torrent"])
+	}
+	if m.Downloads["b.torrent"].Name != "b.txt" {
+		t.Fatalf("b.torrent not routed: %+v", m.Downloads["b.torrent"])
+	}
+}
+
+func TestModelAllDone(t *testing.T) {
+	m := NewModel("torl", []string{"a.torrent", "b.torrent"}, ".")
+	if m.allDone() {
+		t.Fatalf("should not be done before start")
+	}
+	m.handleEvent(Event{Type: "complete", ID: "a.torrent"})
+	if m.allDone() {
+		t.Fatalf("should not be done with one remaining")
+	}
+	m.handleEvent(Event{Type: "complete", ID: "b.torrent"})
+	if !m.allDone() {
+		t.Fatalf("should be done after both complete")
 	}
 }
 
 func TestModelQuit(t *testing.T) {
-	m := NewModel("torl", "file.torrent", ".")
+	m := NewModel("torl", []string{"file.torrent"}, ".")
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatalf("expected quit command")

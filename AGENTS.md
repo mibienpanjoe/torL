@@ -4,13 +4,13 @@
 - Node.js BitTorrent client, **ESM** (`"type": "module"` in `package.json`).
 - CLI entry point: `node index.js <torrent-file>`; output is written to the torrent's `info.name` path.
 - Supports single-file and multi-file torrents via UDP and HTTP trackers.
-- No README or other docs; the code is the only source of truth.
+- README.md, CONTRIBUTING.md, and LICENSE are maintained for human contributors; AGENTS.md remains the source of truth for agent context.
 
 ## Developer commands
 - `npm test` runs the full test suite using the built-in `node:test` runner.
 - `npm test -- tests/<file>.test.js` runs a single test file.
-- No build, lint, or formatter scripts exist.
-- `npm install` is plain JS dependencies; no native build toolchain is required.
+- `npm run build-tui` builds the Go TUI binary; `npm install` runs it automatically when Go is present.
+- `npm install` is plain JS dependencies; Go is required only for the TUI.
 
 ## Environment
 - Target the latest Node.js LTS / current version.
@@ -31,7 +31,7 @@
 - `index.js` is the CLI entry point (with `#!/usr/bin/env node`) and accepts either a `.torrent` file path or a `magnet:` link; use `-o <dir>` to set the output directory.
 - `src/cli.js` implements the command-line interface with `--help`, `--version`, `--output`, `--quiet`, `--json`, and `--concurrency` flags. It accepts multiple `.torrent` files or `magnet:` links and downloads them sequentially or concurrently.
 - `package.json` exposes the `torl` binary via `index.js` and declares Node.js `>=20.0.0` as the engine requirement.
-- `tui/` is a Go module with a Bubble Tea TUI (`torl-tui`) that spawns `torl --json` and displays progress, peers, and status. It accepts both `.torrent` files and `magnet:` links, builds to a single binary, and requires `torl` in `PATH` or a `--torl-path` override. Running `npm install` will build `torl-tui` automatically if Go is installed; otherwise use `npm run build-tui` after installing Go.
+- `tui/` is a Go module with a Bubble Tea TUI (`torl-tui`) that spawns `torl --json` and displays progress, peers, and status. It accepts multiple `.torrent` files and `magnet:` links, builds to a single binary, and requires `torl` in `PATH` or a `--torl-path` override. Running `npm install` will build `torl-tui` automatically if Go is installed; otherwise use `npm run build-tui` after installing Go.
 - `tests/mocks/` contains a local UDP tracker, TCP peer, DHT node, UPnP gateway, NAT-PMP gateway, and metadata peer for fast, deterministic integration tests.
 
 ## Dependencies

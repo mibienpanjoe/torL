@@ -48,6 +48,7 @@
 - [x] Parse torl JSON events in Go.
 - [x] Add Go unit tests for event parsing and model.
 - [x] Build `torl-tui` binary and verify it starts.
+- [x] Support multiple torrents/magnet links in the TUI.
 - [x] Update `AGENTS.md` and `.gitignore`.
 
 ## Multi-Torrent CLI
