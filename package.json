@@ -5,6 +5,7 @@
   "main": "index.js",
   "bin": {
     "torl": "index.js",
+    "torl-cli": "bin/torl-cli.js",
     "torl-tui": "bin/torl-tui.js"
   },
   "files": [

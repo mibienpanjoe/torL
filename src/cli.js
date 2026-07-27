@@ -12,10 +12,18 @@ import { readFileSync } from 'fs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 
+export function getDefaultOutputDir() {
+  const home = process.env.HOME || process.env.USERPROFILE;
+  if (home) {
+    return path.join(home, 'Downloads');
+  }
+  return process.cwd();
+}
+
 export function parseArgs(argv) {
   const args = argv.slice(2);
   const options = {
-    output: process.cwd(),
+    output: getDefaultOutputDir(),
     quiet: false,
     json: false,
     help: false,
@@ -61,10 +69,10 @@ export function parseArgs(argv) {
 }
 
 export function getUsage() {
-  return `Usage: torl <torrent-file|magnet-link>... [options]
+  return `Usage: torl-cli <torrent-file|magnet-link>... [options]
 
 Options:
-  -o, --output <dir>       Output directory (default: current directory)
+  -o, --output <dir>       Output directory (default: Downloads)
   -c, --concurrency <n>    Max simultaneous downloads (default: 1)
   -q, --quiet              Suppress progress output
   --json                   Emit machine-readable JSON events on stdout

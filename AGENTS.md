@@ -30,8 +30,9 @@
 - `src/magnet-parser.js` parses magnet links (hex and base32 info hashes, display name, tracker URLs).
 - `src/metadata-downloader.js` downloads the `.torrent` info dictionary from a peer via the BEP 10 extension protocol + BEP 9 metadata exchange.
 - `src/magnet-resolver.js` resolves a magnet link to a full torrent object by discovering peers (trackers + DHT) and downloading metadata.
-- `index.js` is the CLI entry point (with `#!/usr/bin/env node`) and accepts either a `.torrent` file path or a `magnet:` link; use `-o <dir>` to set the output directory.
-- `src/cli.js` implements the command-line interface with `--help`, `--version`, `--output`, `--quiet`, `--json`, and `--concurrency` flags. It accepts multiple `.torrent` files or `magnet:` links and downloads them sequentially or concurrently.
+- `index.js` is the TUI entry point (with `#!/usr/bin/env node`). It locates the `torl-tui` binary and spawns it; use `-o <dir>` to override the default output directory (`~/Downloads`).
+- `bin/torl-cli.js` is the headless CLI entry point; `src/cli.js` implements the downloader logic with `--help`, `--version`, `--output`, `--quiet`, `--json`, and `--concurrency` flags. It accepts multiple `.torrent` files or `magnet:` links and downloads them sequentially or concurrently.
+- The default output directory for both `torl` and `torl-cli` is the user's `Downloads` folder (`$HOME/Downloads` or `%USERPROFILE%\Downloads`), falling back to the current working directory.
 - `package.json` exposes the `torl` binary via `index.js` and declares Node.js `>=20.0.0` as the engine requirement.
 - `tui/` is a Go module with a Bubble Tea TUI (`torl-tui`) that spawns `torl --json` and displays progress, peers, and status. It accepts multiple `.torrent` files and `magnet:` links, builds to a single binary, and requires `torl` in `PATH` or a `--torl-path` override. `npm install` downloads a prebuilt `torl-tui` binary from the GitHub release matching the package version; if the download fails, it falls back to building from source when Go is installed.
 - `tests/mocks/` contains a local UDP tracker, TCP peer, DHT node, UPnP gateway, NAT-PMP gateway, and metadata peer for fast, deterministic integration tests.

@@ -3,15 +3,25 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/torl/tui/torl"
 )
 
+func defaultOutputDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "."
+	}
+	return filepath.Join(home, "Downloads")
+}
+
 func main() {
-	torlPath := "torl"
-	outputDir := "."
+	programName := filepath.Base(os.Args[0])
+	torlPath := "torl-cli"
+	outputDir := defaultOutputDir()
 
 	args := os.Args[1:]
 	var inputs []string
@@ -33,11 +43,11 @@ func main() {
 			outputDir = args[i+1]
 			i++
 		} else if arg == "-h" || arg == "--help" {
-			printUsage()
+			printUsage(programName)
 			os.Exit(0)
 		} else if strings.HasPrefix(arg, "-") {
 			fmt.Fprintf(os.Stderr, "Error: unknown option %s\n", arg)
-			printUsage()
+			printUsage(programName)
 			os.Exit(1)
 		} else {
 			inputs = append(inputs, arg)
@@ -45,7 +55,7 @@ func main() {
 	}
 
 	if len(inputs) == 0 {
-		printUsage()
+		printUsage(programName)
 		os.Exit(1)
 	}
 
@@ -67,10 +77,10 @@ func main() {
 	}
 }
 
-func printUsage() {
-	fmt.Fprintf(os.Stderr, "Usage: torl-tui [options] <torrent-file|magnet-link>...\n\n")
+func printUsage(name string) {
+	fmt.Fprintf(os.Stderr, "Usage: %s [options] <torrent-file|magnet-link>...\n\n", name)
 	fmt.Fprintf(os.Stderr, "Options:\n")
-	fmt.Fprintf(os.Stderr, "  -o, --output <dir>  Output directory (default: current directory)\n")
-	fmt.Fprintf(os.Stderr, "  -torl-path <path>    Path to the torl executable (default: torl)\n")
+	fmt.Fprintf(os.Stderr, "  -o, --output <dir>  Output directory (default: Downloads)\n")
+	fmt.Fprintf(os.Stderr, "  -torl-path <path>    Path to the torl-cli executable (default: torl-cli)\n")
 	fmt.Fprintf(os.Stderr, "  -h, --help           Show this help message\n")
 }

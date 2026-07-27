@@ -26,7 +26,7 @@
 - **Pause & resume** — a `.torl.state` file stores progress; existing data is verified on restart.
 - **NAT traversal** — automatic UPnP IGD and NAT-PMP port mapping helpers.
 - **JSON output** — machine-readable progress events for integration with other tools.
-- **Interactive TUI** — optional terminal UI (`torl-tui`) with progress bars, peer list, and status.
+- **Interactive TUI** — running `torl` opens a terminal UI with progress bars, peer list, and status.
 - **Multiple downloads** — queue or run several torrents and magnet links concurrently.
 - **Fully tested** — fast, deterministic mock tests for the peer wire protocol, trackers, DHT, and NAT.
 
@@ -46,18 +46,52 @@ cd torL
 npm install
 ```
 
-The TUI binary (`torl-tui`) is downloaded automatically during `npm install` for your platform from the matching GitHub release. If a prebuilt binary is not available, it falls back to building from source when Go is installed.
+The `torl` command opens the TUI; the underlying TUI binary (`torl-tui`) is downloaded automatically during `npm install` for your platform from the matching GitHub release. If a prebuilt binary is not available, it falls back to building from source when Go is installed.
+
+## TUI Usage
+
+Running `torl` opens the interactive terminal UI. It accepts multiple torrent files and magnet links.
+
+```bash
+# open the TUI with a single torrent
+torl debian-13.6.0-amd64-netinst.iso.torrent
+
+# pass several inputs
+torl a.torrent b.torrent "magnet:?xt=urn:btih:..."
+
+# override the output directory
+torl file.torrent -o ~/Downloads
+
+# override the path to the downloader backend
+torl file.torrent -torl-path ./bin/torl-cli.js
+```
+
+You can also expose the TUI through a browser using [ttyd](https://github.com/tsl0922/ttyd):
+
+```bash
+ttyd torl file.torrent -o ~/Downloads
+```
+
+Then open `http://localhost:7681`:
+
+<p align="center">
+  <img src="assets/tui-ttyd-preview.png" alt="torL TUI via ttyd" width="800">
+</p>
+
+Inside the TUI, press `q` or `Ctrl+C` to quit.
 
 ## CLI Usage
 
+For scripts or headless environments, use `torl-cli` instead of the TUI.
+
 ```bash
-torl <torrent-file|magnet-link>... [options]
+torl-cli <torrent-file|magnet-link>... [options]
 ```
 
 ### Options
 
 ```
-  -o, --output <dir>       Output directory (default: current directory)
+  -o, --output <dir>       Output directory (default: Downloads)
   -c, --concurrency <n>    Max simultaneous downloads (default: 1)
   -q, --quiet              Suppress progress output
       --json               Emit machine-readable JSON events on stdout
@@ -70,56 +104,28 @@ torl <torrent-file|magnet-link>... [options]
 Download a single torrent:
 
 ```bash
-torl debian-13.6.0-amd64-netinst.iso.torrent -o ~/Downloads
+torl-cli debian-13.6.0-amd64-netinst.iso.torrent
 ```
 
 Download from a magnet link:
 
 ```bash
-torl "magnet:?xt=urn:btih:...&dn=example" -o ~/Downloads
+torl-cli "magnet:?xt=urn:btih:...&dn=example"
 ```
 
 Download multiple torrents concurrently:
 
 ```bash
-torl a.torrent b.torrent "magnet:?xt=urn:btih:..." -c 3
+torl-cli a.torrent b.torrent "magnet:?xt=urn:btih:..." -c 3
 ```
 
-Machine-readable JSON events:
+Machine-readable JSON events (great for piping into other tools):
 
 ```bash
-torl file.torrent --json
+torl-cli file.torrent --json
 ```
 
 Output is written to a directory named after the torrent inside the output directory.
-
-## TUI Usage
-
-`torl-tui` wraps `torl --json` in a nicer terminal interface. It accepts multiple torrent files and magnet links.
-
-```bash
-torl-tui debian-13.6.0-amd64-netinst.iso.torrent -o ~/Downloads
-
-# pass several inputs
-torl-tui a.torrent b.torrent "magnet:?xt=urn:btih:..." -o ~/Downloads
-
-# override the path to the torl executable
- torl-tui file.torrent -torl-path ./index.js -o ~/Downloads
-```
-
-You can also expose the TUI through a browser using [ttyd](https://github.com/tsl0922/ttyd):
-
-```bash
-ttyd torl-tui file.torrent -o ~/Downloads
-```
-
-Then open `http://localhost:7681`:
-
-<p align="center">
-  <img src="assets/tui-ttyd-preview.png" alt="torL TUI via ttyd" width="800">
-</p>
-
-Inside the TUI, press `q` or `Ctrl+C` to quit.
 
 ## JSON Events
 
