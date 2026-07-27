@@ -21,34 +21,32 @@
 ## Features
 
 - **Torrent files & magnet links** — download from `.torrent` files or resolve `magnet:` links.
-- **Tracker + DHT peer discovery** — supports UDP and HTTP trackers plus BitTorrent Mainline DHT (BEP 5).
-- **Rarest-first piece selection** — global `RarityMap` and per-peer queues pick the rarest pieces first.
-- **Pause & resume** — a `.torl.state` file stores the completed bitfield; existing data is SHA1-verified on restart.
+- **Tracker + DHT peer discovery** — supports UDP and HTTP trackers plus Mainline DHT.
+- **Rarest-first piece selection** — prioritizes the pieces that are least available in the swarm.
+- **Pause & resume** — a `.torl.state` file stores progress; existing data is verified on restart.
 - **NAT traversal** — automatic UPnP IGD and NAT-PMP port mapping helpers.
-- **Metadata exchange** — resolves magnet links via BEP 10 extension protocol + BEP 9 metadata exchange.
 - **JSON output** — machine-readable progress events for integration with other tools.
-- **Interactive TUI** — optional Go/Bubble Tea TUI (`torl-tui`) with progress, peers, and messages.
-- **Fully tested** — mock UDP tracker, TCP peer, DHT node, UPnP/NAT-PMP gateways, and metadata peers.
+- **Interactive TUI** — optional terminal UI (`torl-tui`) with progress bars, peer list, and status.
+- **Multiple downloads** — queue or run several torrents and magnet links concurrently.
+- **Fully tested** — fast, deterministic mock tests for the peer wire protocol, trackers, DHT, and NAT.
 
 ## Installation
 
+Install the package globally from npm:
+
 ```bash
-npm install -g torl
+npm install -g torl-client
 ```
 
 Or clone and install locally:
 
 ```bash
-git clone https://github.com/yourusername/torl.git
-cd torl
+git clone https://github.com/mibienpanjoe/torL.git
+cd torL
 npm install
 ```
 
-The optional TUI binary (`torl-tui`) is built automatically during `npm install` if Go is available. If Go is not installed, install it later and run:
-
-```bash
-npm run build-tui
-```
+The TUI binary (`torl-tui`) is downloaded automatically during `npm install` for your platform from the matching GitHub release. If a prebuilt binary is not available, it falls back to building from source when Go is installed.
 
 ## CLI Usage
 
@@ -87,24 +85,26 @@ Download multiple torrents concurrently:
 torl a.torrent b.torrent "magnet:?xt=urn:btih:..." -c 3
 ```
 
-Machine-readable JSON events (great for piping into other tools):
+Machine-readable JSON events:
 
 ```bash
 torl file.torrent --json
 ```
 
-Output is written to a directory named after the torrent's `info.name` inside the output directory.
+Output is written to a directory named after the torrent inside the output directory.
 
 ## TUI Usage
 
-`torl-tui` wraps `torl --json` in a nicer terminal interface. It requires `torl` in your `PATH` or a path override.
+`torl-tui` wraps `torl --json` in a nicer terminal interface. It accepts multiple torrent files and magnet links.
 
 ```bash
-# after building the TUI binary
 torl-tui debian-13.6.0-amd64-netinst.iso.torrent -o ~/Downloads
 
-# override path to the torl executable
-torl-tui file.torrent -torl-path ./index.js -o ~/Downloads
+# pass several inputs
+torl-tui a.torrent b.torrent "magnet:?xt=urn:btih:..." -o ~/Downloads
+
+# override the path to the torl executable
+ torl-tui file.torrent -torl-path ./index.js -o ~/Downloads
 ```
 
 You can also expose the TUI through a browser using [ttyd](https://github.com/tsl0922/ttyd):
@@ -132,28 +132,6 @@ When using `--json`, each line on stdout is a JSON object:
 {"type":"complete","id":"file.torrent","path":"/home/user/Downloads/example.iso"}
 ```
 
-## Architecture
-
-```
-index.js                CLI entry point
-src/cli.js              Argument parsing, multi-download orchestration
-src/download.js         Peer pool, piece scheduling, announce loop
-src/tracker.js          UDP & HTTP tracker announce
-src/dht.js              Mainline DHT bootstrap + iterative get_peers
-src/message.js          BitTorrent peer-wire + extension protocol messages
-src/Pieces.js           Requested/received block tracking
-src/Queue.js            Per-peer rarest-first request queue
-src/RarityMap.js        Global piece availability across peers
-src/state.js            Pause/resume state persistence
-src/verify.js           SHA1 piece verification on restart
-src/nat.js              UPnP IGD / NAT-PMP port mapping
-src/torrent-parser.js   Bencode decode + Buffer conversion
-src/magnet-parser.js    Magnet link parsing (hex/base32 info hashes)
-src/magnet-resolver.js  Magnet -> full torrent via DHT/trackers + metadata exchange
-src/metadata-downloader.js  BEP 9 metadata exchange client
-tui/                    Go + Bubble Tea TUI
-```
-
 ## Development
 
 Run the test suite:
@@ -168,17 +146,11 @@ Run a single test file:
 npm test -- tests/download.test.js
 ```
 
-Build the TUI binary:
+Build the TUI binary from source:
 
 ```bash
 npm run build-tui
 ```
-
-## Testing Notes
-
-- `tests/live-tracker.test.js` contacts a public HTTP tracker over the network; it is gated by a longer timeout.
-- All other tests use local mocks for deterministic, fast feedback.
-- Real-world peer downloading is environment-dependent (NAT, firewalls, swarm health); mock peer tests cover the wire protocol deterministically.
 
 ## Contributing
 
