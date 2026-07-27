@@ -170,4 +170,60 @@ describe('download', () => {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
     }
   });
+
+  it('saves state on graceful shutdown and resumes from it', async () => {
+    const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'single-file.torrent'));
+    const data = Buffer.from('Hello, World!');
+    const infoHash = torrentParser.infoHash(torrent);
+
+    const peer = await createMockPeer(torrent, data);
+
+    const target = await createMockDHTNode({
+      peers: new Map([[infoHash.toString('hex'), [{ ip: peer.ip, port: peer.port }]]])
+    });
+    const bootstrap = await createMockDHTNode({
+      neighbors: [{ id: target.id, ip: target.ip, port: target.port }]
+    });
+
+    torrent.announce = Buffer.alloc(0);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'torl-'));
+    const destPath = path.join(tmpDir, 'test.txt');
+    const statePath = `${destPath}.torl.state`;
+
+    try {
+      const controller = new AbortController();
+
+      const downloadPromise = download(torrent, destPath, {
+        useDHT: true,
+        dhtBootstrapNodes: [{ ip: bootstrap.ip, port: bootstrap.port }],
+        signal: controller.signal,
+        saveInterval: 0
+      });
+
+      // Wait for some progress, then abort
+      await new Promise(resolve => setTimeout(resolve, 200));
+      controller.abort();
+
+      await downloadPromise;
+
+      assert.ok(fs.existsSync(statePath));
+      assert.ok(fs.existsSync(destPath));
+      const partial = fs.readFileSync(destPath);
+      assert.ok(partial.length > 0);
+
+      // Resume: re-download without signal should complete
+      await download(torrent, destPath, {
+        useDHT: true,
+        dhtBootstrapNodes: [{ ip: bootstrap.ip, port: bootstrap.port }]
+      });
+      const downloaded = fs.readFileSync(destPath);
+      assert.deepStrictEqual(downloaded, data);
+    } finally {
+      peer.close();
+      bootstrap.close();
+      target.close();
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
+    }
+  });
 });

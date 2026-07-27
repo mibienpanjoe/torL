@@ -109,7 +109,13 @@ export async function run(argv = process.argv) {
     ? null
     : new MultiProgressLogger();
 
-  const results = await downloadAll(options.inputs, options, progressLogger);
+  return _run(options, progressLogger);
+}
+
+export async function _run(options, progressLogger) {
+  const signal = options.signal || null;
+
+  const results = await downloadAll(options.inputs, options, progressLogger, undefined, signal);
 
   const failures = results.filter(r => !r.success);
   if (failures.length > 0) {
@@ -149,12 +155,13 @@ class MultiProgressLogger {
   }
 }
 
-export async function downloadAll(inputs, options, progressLogger, downloadOneFn = downloadOne) {
+export async function downloadAll(inputs, options, progressLogger, downloadOneFn = downloadOne, signal = null) {
   const results = [];
   let index = 0;
 
   async function worker() {
     while (index < inputs.length) {
+      if (signal && signal.aborted) break;
       const input = inputs[index++];
       try {
         const rootPath = await downloadOneFn(input, options, progressLogger);
@@ -200,9 +207,9 @@ async function downloadOne(input, options, progressLogger) {
         }
       };
 
-  await download(torrent, rootPath, { log, onProgress });
+  await download(torrent, rootPath, { log, onProgress, signal: options.signal });
 
-  if (options.json) {
+  if (options.json && !options.signal?.aborted) {
     emitJson({ type: 'complete', id, path: rootPath });
   }
 

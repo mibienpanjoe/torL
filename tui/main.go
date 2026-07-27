@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/torl/tui/torl"
@@ -60,6 +62,16 @@ func main() {
 	}
 
 	model := torl.NewModel(torlPath, inputs, outputDir)
+
+	// Forward OS signals to the model so paused processes save state.
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		// Let the TUI program handle quit via tea.Quit.
+		model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	}()
+
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	if err := p.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
@@ -77,7 +89,13 @@ func main() {
 	}
 
 	if !model.Done() {
-		fmt.Fprintln(os.Stderr, "Download cancelled")
+		// Downloads that were deliberately paused are fine.
+		paused := model.PausedInputs()
+		if len(paused) > 0 {
+			fmt.Fprintf(os.Stderr, "Paused: %s\n", strings.Join(paused, ", "))
+		} else {
+			fmt.Fprintln(os.Stderr, "Download cancelled")
+		}
 		os.Exit(1)
 	}
 }

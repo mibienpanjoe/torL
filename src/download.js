@@ -22,15 +22,25 @@ export default function download(torrent, rootPath, options = {}) {
     useDHT = true,
     dhtBootstrapNodes = undefined,
     peers: injectedPeers = null,
-    onProgress = () => {}
+    onProgress = () => {},
+    signal = undefined,
+    saveInterval = 30000
   } = options;
 
   return new Promise((resolve, reject) => {
     const trackerController = new AbortController();
+    const shutdownController = new AbortController();
 
     const peersPromise = injectedPeers
       ? Promise.resolve({ peers: injectedPeers, interval: null })
       : getPeers(torrent, useDHT, trackerController, dhtBootstrapNodes);
+
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        shutdownController.abort();
+        trackerController.abort();
+      }, { once: true });
+    }
 
     peersPromise.then(({ peers, interval }) => {
       const savedBitfield = state.load(rootPath);
@@ -52,7 +62,9 @@ export default function download(torrent, rootPath, options = {}) {
         onProgress,
         onComplete: resolve,
         onError: reject,
-        trackerController
+        trackerController,
+        shutdownController,
+        saveInterval
       });
       pool.addPeers(peers);
       pool.start();
@@ -121,6 +133,7 @@ class PeerPool {
     this.onComplete = options.onComplete;
     this.onError = options.onError;
     this.trackerController = options.trackerController;
+    this.shutdownController = options.shutdownController;
     this.totalSize = torrentSize(torrent);
     this.totalPieces = torrent.info.pieces.length / 20;
 
@@ -130,6 +143,21 @@ class PeerPool {
     this.retryTimer = null;
     this.complete = false;
     this.announceTimeout = null;
+    this.saveTimer = null;
+
+    if (options.saveInterval > 0) {
+      this.saveTimer = setInterval(() => {
+        if (!this.complete) {
+          state.save(this.rootPath, this.pieces.completedBitfield());
+        }
+      }, options.saveInterval);
+    }
+
+    if (this.shutdownController) {
+      this.shutdownController.signal.addEventListener('abort', () => {
+        this._shutdown();
+      }, { once: true });
+    }
   }
 
   scheduleAnnounce(ms, fetchPeers) {
@@ -258,14 +286,7 @@ class PeerPool {
   _finish() {
     if (this.complete) return;
     this.complete = true;
-    if (this.retryTimer) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
-    }
-    if (this.announceTimeout) {
-      clearTimeout(this.announceTimeout);
-      this.announceTimeout = null;
-    }
+    this._clearTimers();
     if (this.trackerController) {
       this.trackerController.abort();
     }
@@ -276,9 +297,7 @@ class PeerPool {
     this.onComplete();
   }
 
-  _fail(err) {
-    if (this.complete) return;
-    this.complete = true;
+  _clearTimers() {
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
@@ -287,6 +306,28 @@ class PeerPool {
       clearTimeout(this.announceTimeout);
       this.announceTimeout = null;
     }
+    if (this.saveTimer) {
+      clearInterval(this.saveTimer);
+      this.saveTimer = null;
+    }
+  }
+
+  _shutdown() {
+    if (this.complete) return;
+    this.complete = true;
+    this._clearTimers();
+    for (const { socket } of this.activePeers.values()) {
+      try { socket.end(); } catch (e) {}
+    }
+    this.activePeers.clear();
+    state.save(this.rootPath, this.pieces.completedBitfield());
+    this.onComplete();
+  }
+
+  _fail(err) {
+    if (this.complete) return;
+    this.complete = true;
+    this._clearTimers();
     if (this.trackerController) {
       this.trackerController.abort();
     }

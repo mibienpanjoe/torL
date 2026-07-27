@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -18,15 +19,17 @@ import (
 )
 
 var (
-	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7D56F4")).MarginBottom(1)
-	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87")).Bold(true)
-	infoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#A3A3A3"))
-	activeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575"))
-	labelStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA"))
-	panelStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#874BFD")).Padding(1).Width(70)
-	itemStyle    = lipgloss.NewStyle().Border(lipgloss.HiddenBorder()).Padding(0, 1).Width(66)
-	peerStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280"))
-	footerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#737373")).MarginTop(1)
+	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7D56F4")).MarginBottom(1)
+	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F87")).Bold(true)
+	infoStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#A3A3A3"))
+	activeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575"))
+	labelStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA"))
+	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7D56F4"))
+	pausedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F59E0B"))
+	panelStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#874BFD")).Padding(1).Width(70)
+	itemStyle     = lipgloss.NewStyle().Border(lipgloss.HiddenBorder()).Padding(0, 1).Width(66)
+	peerStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280"))
+	footerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#737373")).MarginTop(1)
 )
 
 type tickMsg time.Time
@@ -49,17 +52,18 @@ func NewModel(torlPath string, inputs []string, output string) *Model {
 	}
 
 	return &Model{
-		TorlPath:  torlPath,
-		Inputs:    inputs,
-		Output:    output,
-		Downloads: downloads,
-		spinner:   sp,
-		progress:  prog,
-		messages:  []string{},
+		TorlPath:     torlPath,
+		Inputs:       inputs,
+		Output:       output,
+		Downloads:    downloads,
+		pendingCount: len(inputs),
+		processes:    make(map[string]*exec.Cmd),
+		spinner:      sp,
+		progress:     prog,
+		messages:     []string{},
 	}
 }
 
-// Download holds state for a single torrent download.
 type Download struct {
 	ID              string
 	Name            string
@@ -78,29 +82,32 @@ type Download struct {
 	LastUpdate      time.Time
 	LastDownloaded  int64
 	SpeedBps        float64
+	Paused          bool
 }
 
-// Model manages the whole TUI and multiple downloads.
 type Model struct {
 	TorlPath  string
 	Inputs    []string
 	Output    string
 
-	mu         sync.Mutex
-	Downloads  map[string]*Download
-	messages   []string
-	processErr error
+	mu           sync.Mutex
+	Downloads    map[string]*Download
+	messages     []string
+	pendingCount int
+	processErr   error
+	cursor       int
+	processes    map[string]*exec.Cmd
 
 	spinner  spinner.Model
 	progress progress.Model
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(
-		m.spinner.Tick,
-		m.spawnTorl(),
-		m.tick(),
-	)
+	cmds := []tea.Cmd{m.spinner.Tick, m.tick()}
+	for _, input := range m.Inputs {
+		cmds = append(cmds, m.spawnProcess(input))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) tick() tea.Cmd {
@@ -109,23 +116,36 @@ func (m *Model) tick() tea.Cmd {
 	})
 }
 
-func (m *Model) spawnTorl() tea.Cmd {
+func (m *Model) spawnProcess(input string) tea.Cmd {
 	return func() tea.Msg {
-		args := append([]string{}, m.Inputs...)
-		args = append(args, "--json", "-o", m.Output)
+		args := []string{input, "--json", "-o", m.Output}
 		cmd := exec.Command(m.TorlPath, args...)
 		cmd.Env = os.Environ()
+
+		m.mu.Lock()
+		m.processes[input] = cmd
+		m.mu.Unlock()
+
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
-			return errMsg{err}
+			m.mu.Lock()
+			delete(m.processes, input)
+			m.mu.Unlock()
+			return procErrMsg{input: input, err: err}
 		}
 		stderr, err := cmd.StderrPipe()
 		if err != nil {
-			return errMsg{err}
+			m.mu.Lock()
+			delete(m.processes, input)
+			m.mu.Unlock()
+			return procErrMsg{input: input, err: err}
 		}
 
 		if err := cmd.Start(); err != nil {
-			return errMsg{err}
+			m.mu.Lock()
+			delete(m.processes, input)
+			m.mu.Unlock()
+			return procErrMsg{input: input, err: err}
 		}
 
 		go m.readStderr(stderr)
@@ -145,14 +165,27 @@ func (m *Model) spawnTorl() tea.Cmd {
 		}
 
 		if err := scanner.Err(); err != nil {
-			return errMsg{err}
+			m.mu.Lock()
+			delete(m.processes, input)
+			m.mu.Unlock()
+			return procErrMsg{input: input, err: err}
 		}
 
 		if err := cmd.Wait(); err != nil {
-			return errMsg{err}
+			m.mu.Lock()
+			shouldIgnore := m.Downloads[input] != nil && m.Downloads[input].Paused
+			delete(m.processes, input)
+			m.mu.Unlock()
+			if shouldIgnore {
+				return nil // ignored — user paused
+			}
+			return procErrMsg{input: input, err: err}
 		}
 
-		return doneMsg{}
+		m.mu.Lock()
+		delete(m.processes, input)
+		m.mu.Unlock()
+		return procDoneMsg{input: input}
 	}
 }
 
@@ -193,7 +226,11 @@ func (m *Model) handleEvent(event Event) {
 		d.Name = event.Name
 		d.Total = event.Total
 		d.TotalPieces = event.TotalPieces
-		d.Status = "Downloading"
+		if d.Status == "Resuming" {
+			// stay as Resuming until the first progress comes in
+		} else {
+			d.Status = "Downloading"
+		}
 	case "progress":
 		now := time.Now()
 		if !d.LastUpdate.IsZero() {
@@ -201,7 +238,6 @@ func (m *Model) handleEvent(event Event) {
 			if elapsed > 0 {
 				delta := event.Downloaded - d.LastDownloaded
 				instant := float64(delta) / elapsed
-				// Simple exponential smoothing to avoid jitter.
 				if d.SpeedBps == 0 {
 					d.SpeedBps = instant
 				} else {
@@ -219,6 +255,7 @@ func (m *Model) handleEvent(event Event) {
 		d.ActivePeers = event.ActivePeers
 		d.AvailablePeers = event.AvailablePeers
 		d.Status = "Downloading"
+		d.Paused = false
 	case "peer":
 		peer := fmt.Sprintf("%s %s", peerActionIcon(event.Action), event.Peer)
 		d.Peers = append(d.Peers, peer)
@@ -229,6 +266,7 @@ func (m *Model) handleEvent(event Event) {
 		d.Done = true
 		d.Status = "Complete"
 		d.Percent = 1.0
+		d.Paused = false
 	case "error":
 		d.Err = fmt.Errorf(event.Message)
 		d.Status = "Error"
@@ -237,7 +275,7 @@ func (m *Model) handleEvent(event Event) {
 
 func (m *Model) allDone() bool {
 	for _, d := range m.Downloads {
-		if !d.Done && d.Err == nil {
+		if !d.Done && d.Err == nil && !d.Paused {
 			return false
 		}
 	}
@@ -260,21 +298,69 @@ func peerActionIcon(action string) string {
 	return infoStyle.Render("-")
 }
 
+type procErrMsg struct {
+	input string
+	err   error
+}
+
+type procDoneMsg struct {
+	input string
+}
+
 type errMsg struct{ err error }
 type doneMsg struct{}
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if msg.String() == "q" || msg.String() == "ctrl+c" {
+		switch msg.String() {
+		case "q", "ctrl+c":
+			m.shutdownAll()
 			return m, tea.Quit
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "down", "j":
+			if m.cursor < len(m.Inputs)-1 {
+				m.cursor++
+			}
+		case "p":
+			m.togglePause(m.cursor)
 		}
 	case tickMsg:
 		return m, m.tick()
-	case errMsg:
+	case procErrMsg:
 		m.mu.Lock()
-		m.processErr = msg.err
+		d := m.download(msg.input)
+		if d.Paused {
+			delete(m.processes, msg.input)
+			m.mu.Unlock()
+			return m, nil
+		}
+		m.processErr = fmt.Errorf("torrent %s: %w", path.Base(msg.input), msg.err)
+		d.Err = msg.err
+		d.Status = "Error"
+		m.pendingCount--
 		m.mu.Unlock()
+		m.appendMessage(msg.err.Error())
+		if m.pendingCount <= 0 {
+			return m, tea.Quit
+		}
+	case procDoneMsg:
+		m.mu.Lock()
+		d := m.download(msg.input)
+		if d.Paused {
+			delete(m.processes, msg.input)
+			m.mu.Unlock()
+			return m, nil
+		}
+		m.pendingCount--
+		m.mu.Unlock()
+		if m.pendingCount <= 0 {
+			return m, tea.Quit
+		}
+	case errMsg:
 		m.appendMessage(msg.err.Error())
 		return m, tea.Quit
 	case doneMsg:
@@ -291,6 +377,51 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) togglePause(idx int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if idx < 0 || idx >= len(m.Inputs) {
+		return
+	}
+	input := m.Inputs[idx]
+	d := m.Downloads[input]
+	if d == nil {
+		return
+	}
+
+	if d.Paused {
+		// Resume
+		d.Paused = false
+		d.Status = "Resuming"
+		d.SpeedBps = 0
+	} else if d.Status != "Complete" && d.Status != "Error" {
+		// Pause
+		d.Paused = true
+		d.Status = "Paused"
+		d.SpeedBps = 0
+		if cmd, ok := m.processes[input]; ok && cmd.Process != nil {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+		}
+	}
+}
+
+func (m *Model) shutdownAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for input, d := range m.Downloads {
+		if !d.Done && d.Err == nil {
+			d.Paused = true
+			d.Status = "Paused"
+			d.SpeedBps = 0
+			if cmd, ok := m.processes[input]; ok && cmd.Process != nil {
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+			}
+		}
+	}
+}
+
 func (m *Model) View() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -299,9 +430,9 @@ func (m *Model) View() string {
 	b.WriteString(titleStyle.Render("torl"))
 	b.WriteString("\n\n")
 
-	for _, input := range m.Inputs {
+	for i, input := range m.Inputs {
 		d := m.Downloads[input]
-		b.WriteString(m.renderDownload(d))
+		b.WriteString(m.renderDownload(d, i == m.cursor))
 		b.WriteString("\n")
 	}
 
@@ -313,30 +444,40 @@ func (m *Model) View() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(footerStyle.Render("Press 'q' or Ctrl+C to quit"))
+	b.WriteString(footerStyle.Render("↑↓ select  p pause/resume  q quit"))
 
 	return panelStyle.Render(b.String())
 }
 
-func (m *Model) renderDownload(d *Download) string {
+func (m *Model) renderDownload(d *Download, selected bool) string {
 	var b strings.Builder
+
+	cursor := "  "
+	if selected {
+		cursor = "▸ "
+	}
 
 	name := d.Name
 	if name == "" {
 		name = path.Base(d.ID)
 	}
-	b.WriteString(labelStyle.Render("File: ") + name + "\n")
-	b.WriteString(labelStyle.Render("Status: ") + statusBadge(d.Status) + "\n")
+	header := cursor + labelStyle.Render("File: ") + name
+	if selected {
+		header = selectedStyle.Render(header)
+	}
+	b.WriteString(header + "\n")
+	b.WriteString(cursor + labelStyle.Render("Status: ") + statusBadge(d.Status) + "\n")
 
-	if d.Status == "Starting" {
-		b.WriteString(fmt.Sprintf("\n%s Connecting to peers...\n", m.spinner.View()))
+	if d.Status == "Starting" || d.Status == "Resuming" {
+		b.WriteString(fmt.Sprintf("\n%s %s Connecting to peers...\n", cursor, m.spinner.View()))
 	} else {
-		b.WriteString("\n" + m.progress.ViewAs(d.Percent) + "\n")
+		b.WriteString("\n" + cursor + m.progress.ViewAs(d.Percent) + "\n")
 		speed := ""
 		if d.SpeedBps > 0 {
 			speed = fmt.Sprintf("  %s/s", formatBytes(int64(d.SpeedBps)))
 		}
-		b.WriteString(infoStyle.Render(fmt.Sprintf("%.1f%%  %s / %s%s  %d / %d pieces  peers: %d",
+		b.WriteString(infoStyle.Render(fmt.Sprintf("%s%.1f%%  %s / %s%s  %d / %d pieces  peers: %d",
+			cursor,
 			d.Percent*100,
 			formatBytes(d.Downloaded),
 			formatBytes(d.Total),
@@ -355,6 +496,10 @@ func statusBadge(status string) string {
 		return activeStyle.Render("Complete")
 	case "Error":
 		return errorStyle.Render("Error")
+	case "Paused":
+		return pausedStyle.Render("Paused")
+	case "Resuming":
+		return infoStyle.Render("Resuming")
 	case "Starting":
 		return infoStyle.Render("Starting")
 	default:
@@ -389,23 +534,34 @@ func lastN(items []string, n int) []string {
 	return items[len(items)-n:]
 }
 
-// Err returns any download error.
 func (m *Model) Err() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.anyError()
 }
 
-// Done returns true if all downloads are finished or errored.
 func (m *Model) Done() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.allDone()
 }
 
-// ProcessErr returns any error from the downloader process itself.
 func (m *Model) ProcessErr() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.processErr
+}
+
+// PausedDownloads returns a snapshot of which inputs are currently paused,
+// so main.go can skip reporting them as failures on exit.
+func (m *Model) PausedInputs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []string
+	for _, input := range m.Inputs {
+		if d, ok := m.Downloads[input]; ok && d.Paused {
+			out = append(out, input)
+		}
+	}
+	return out
 }
