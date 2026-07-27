@@ -85,6 +85,12 @@
 - [x] Add tracker fallback test.
 - [x] Publish `torl-client@1.0.2` to npm.
 
+## v1.0.3 / v1.0.4
+
+- [x] Show real-time download speed in the TUI.
+- [x] Fix accidental inclusion of `tui/tui/` build artifact in npm package.
+- [x] Publish `torl-client@1.0.4` to npm.
+
 ## Plan
 
 - `tasks/plan.md` documents Phase 4 (NAT traversal).
