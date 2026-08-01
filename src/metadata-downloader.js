@@ -7,9 +7,17 @@ import crypto from 'crypto';
 import * as message from './message.js';
 
 const METADATA_PIECE_SIZE = 16384;
+const MAX_METADATA_SIZE = 4 * 1024 * 1024;
 
 export function downloadMetadata(peer, infoHash, options = {}) {
-  const timeout = options.timeout || 30000;
+  const timeout = options.timeout ?? 30000;
+  const signal = options.signal;
+  const maxMetadataSize = options.maxMetadataSize ?? MAX_METADATA_SIZE;
+
+  if (signal?.aborted) {
+    return Promise.reject(createAbortError());
+  }
+
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
     let savedBuf = Buffer.alloc(0);
@@ -25,6 +33,7 @@ export function downloadMetadata(peer, infoHash, options = {}) {
     function cleanup() {
       if (timer) clearTimeout(timer);
       timer = null;
+      signal?.removeEventListener('abort', onAbort);
     }
 
     function finish(value) {
@@ -48,6 +57,10 @@ export function downloadMetadata(peer, infoHash, options = {}) {
       timer = setTimeout(() => {
         fail(new Error('Metadata download timed out'));
       }, timeout);
+    }
+
+    function onAbort() {
+      fail(createAbortError());
     }
 
     function msgLen() {
@@ -92,15 +105,19 @@ export function downloadMetadata(peer, infoHash, options = {}) {
         if (ext && ext.utMetadata) {
           peerUtMetadataId = ext.utMetadata;
           metadataSize = ext.metadataSize || 0;
-          if (!metadataSize || metadataSize <= 0) {
+          if (!Number.isSafeInteger(metadataSize) || metadataSize <= 0) {
             fail(new Error('Peer did not advertise metadata size'));
+            return;
+          }
+          if (metadataSize > maxMetadataSize) {
+            fail(new Error('Metadata size exceeds 4 MiB limit'));
             return;
           }
           metadata = Buffer.alloc(metadataSize);
           resetTimer();
           requestNextPiece();
         }
-      } else if (m.id === 20 && peerUtMetadataId && m.extId === peerUtMetadataId) {
+      } else if (m.id === 20 && peerUtMetadataId && m.extId === message.UT_METADATA_ID) {
         const meta = message.parseMetadataMessage(msg);
         if (meta.msgType === 1 && meta.piece === requestedPiece && meta.data) {
           const start = meta.piece * METADATA_PIECE_SIZE;
@@ -130,11 +147,18 @@ export function downloadMetadata(peer, infoHash, options = {}) {
       }
     });
 
+    signal?.addEventListener('abort', onAbort, { once: true });
+    resetTimer();
     socket.connect(peer.port, peer.ip, () => {
-      resetTimer();
       socket.write(message.buildHandshakeFromInfoHash(infoHash));
     });
   });
+}
+
+function createAbortError() {
+  const error = new Error('Metadata download aborted');
+  error.name = 'AbortError';
+  return error;
 }
 
 function convertBuffers(value) {

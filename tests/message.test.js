@@ -62,7 +62,8 @@ describe('message', () => {
   it('sets the extension protocol bit in the handshake', () => {
     const torrent = { info: { pieces: INFO_HASH } };
     const handshake = message.buildHandshake(torrent);
-    assert.strictEqual(handshake.readUInt8(20), 0x10);
+    assert.strictEqual(handshake.readUInt8(25) & 0x10, 0x10);
+    assert.strictEqual(handshake.readUInt8(20), 0);
   });
 
   it('builds and parses an extended handshake', () => {

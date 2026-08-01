@@ -5,6 +5,8 @@ import bencode from 'bencode';
 import * as torrentParser from './torrent-parser.js';
 import * as util from './util.js';
 
+export const UT_METADATA_ID = 1;
+
 export function buildHandshake(torrent) {
   return buildHandshakeFromInfoHash(torrentParser.infoHash(torrent));
 }
@@ -16,9 +18,8 @@ export function buildHandshakeFromInfoHash(infoHash) {
   // pstr
   buf.write('BitTorrent protocol', 1);
   // reserved
-  // enable extension protocol (BEP 10): set bit 0x10 in the first reserved byte
-  buf.writeUInt32BE(0x10000000, 20);
-  buf.writeUInt32BE(0, 24);
+  // BEP 10 extension protocol: reserved[5] & 0x10.
+  buf.writeUInt8(0x10, 25);
   // info hash
   infoHash.copy(buf, 28);
   // peer id
@@ -174,9 +175,9 @@ export function parse(msg) {
 
 // --- BEP 10 Extension Protocol ---
 
-export function buildExtHandshake(metadataSize, listenPort) {
+export function buildExtHandshake(metadataSize, listenPort, utMetadataId = UT_METADATA_ID) {
   const dict = {
-    m: { ut_metadata: 1 }
+    m: { ut_metadata: utMetadataId }
   };
   if (metadataSize !== undefined) {
     dict.metadata_size = metadataSize;

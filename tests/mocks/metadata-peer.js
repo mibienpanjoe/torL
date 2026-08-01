@@ -10,12 +10,14 @@ export function createMockMetadataPeer(torrent, options = {}) {
   const { port = 0 } = options;
   const infoHash = torrentParser.infoHash(torrent);
   const metadata = Buffer.from(bencode.encode(torrent.info));
+  const advertisedMetadataSize = options.advertisedMetadataSize ?? metadata.length;
+  const utMetadataId = options.utMetadataId ?? message.UT_METADATA_ID;
 
   const server = net.createServer(socket => {
     let receivedHandshake = false;
     let savedBuf = Buffer.alloc(0);
     let handshake = true;
-    let peerUtMetadataId = null;
+    let clientUtMetadataId = null;
 
     function msgLen() {
       return handshake ? savedBuf.readUInt8(0) + 49 : savedBuf.readInt32BE(0) + 4;
@@ -31,10 +33,11 @@ export function createMockMetadataPeer(torrent, options = {}) {
 
         if (!receivedHandshake) {
           if (msg.toString('utf8', 1, 20) === 'BitTorrent protocol' &&
-              msg.slice(28, 48).equals(infoHash)) {
+              msg.slice(28, 48).equals(infoHash) &&
+              (msg.readUInt8(25) & 0x10) !== 0) {
             receivedHandshake = true;
             socket.write(message.buildHandshake(torrent));
-            socket.write(message.buildExtHandshake(metadata.length));
+            socket.write(message.buildExtHandshake(advertisedMetadataSize, undefined, utMetadataId));
           } else {
             socket.end();
             return;
@@ -44,15 +47,15 @@ export function createMockMetadataPeer(torrent, options = {}) {
           if (m.id === 20 && m.extId === 0) {
             const ext = message.parseExtHandshake(msg);
             if (ext && ext.utMetadata) {
-              peerUtMetadataId = ext.utMetadata;
+              clientUtMetadataId = ext.utMetadata;
             }
-          } else if (m.id === 20 && peerUtMetadataId && m.extId === peerUtMetadataId) {
+          } else if (m.id === 20 && clientUtMetadataId && m.extId === utMetadataId) {
             const meta = message.parseMetadataMessage(msg);
             if (meta.msgType === 0) {
               const pieceSize = 16384;
               const start = meta.piece * pieceSize;
               const piece = metadata.slice(start, start + pieceSize);
-              socket.write(message.buildMetadataData(meta.piece, piece, 1));
+              socket.write(message.buildMetadataData(meta.piece, piece, clientUtMetadataId));
             }
           }
         }
