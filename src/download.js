@@ -1,7 +1,5 @@
 'use strict';
 
-import fs from 'fs';
-import path from 'path';
 import net from 'net';
 import * as tracker from './tracker.js';
 import * as message from './message.js';
@@ -10,6 +8,7 @@ import * as verify from './verify.js';
 import Pieces from './Pieces.js';
 import Queue from './Queue.js';
 import RarityMap from './RarityMap.js';
+import FileWriter from './file-writer.js';
 import { DHTClient } from './dht.js';
 
 export default function download(torrent, rootPath, options = {}) {
@@ -138,7 +137,10 @@ class PeerPool {
     this.shutdownController = options.shutdownController;
     this.totalSize = torrentSize(torrent);
     this.totalPieces = torrent.info.pieces.length / 20;
-    this.requestPipeline = Math.max(1, options.requestPipeline);
+    this.requestPipeline = Number.isFinite(options.requestPipeline)
+      ? Math.max(1, Math.floor(options.requestPipeline))
+      : 16;
+    this.writer = new FileWriter(torrent, rootPath);
 
     this.availablePeers = [];
     this.activePeers = new Map();
@@ -213,7 +215,7 @@ class PeerPool {
     this.retryCounts.set(id, this.retryCounts.get(id) + 1);
     const socket = new net.Socket();
     const queue = new Queue(this.torrent, this.rarityMap, id);
-    this.activePeers.set(id, { socket, peer, queue, outstanding: new Map() });
+    this.activePeers.set(id, { id, socket, peer, queue, outstanding: new Map() });
 
     socket.on('error', err => {
       this.log(`peer ${id} error: ${err.message}`);
@@ -301,7 +303,13 @@ class PeerPool {
       try { socket.end(); } catch (e) {}
     }
     this.activePeers.clear();
-    this.onComplete();
+    try {
+      this.writer.close();
+      state.save(this.rootPath, this.pieces.completedBitfield());
+      this.onComplete();
+    } catch (err) {
+      this.onError(err);
+    }
   }
 
   _clearTimers() {
@@ -327,8 +335,13 @@ class PeerPool {
       try { socket.end(); } catch (e) {}
     }
     this.activePeers.clear();
-    state.save(this.rootPath, this.pieces.completedBitfield());
-    this.onComplete();
+    try {
+      this.writer.close();
+      state.save(this.rootPath, this.pieces.completedBitfield());
+      this.onComplete();
+    } catch (err) {
+      this.onError(err);
+    }
   }
 
   _fail(err) {
@@ -342,6 +355,7 @@ class PeerPool {
       try { socket.end(); } catch (e) {}
     }
     this.activePeers.clear();
+    try { this.writer.close(); } catch (e) {}
     this.onError(err);
   }
 
@@ -382,14 +396,24 @@ class PeerPool {
 
   _handlePiece(peer, pieceResp) {
     const key = blockKey(pieceResp);
-    if (!peer.outstanding.delete(key)) return;
+    const requested = peer.outstanding.get(key);
+    if (!requested) return;
+    if (pieceResp.block.length !== requested.length) {
+      this._handleDisconnect(peer.id);
+      return;
+    }
+    peer.outstanding.delete(key);
 
     this.pieces.addReceived(pieceResp);
     const offset = pieceResp.index * this.torrent.info['piece length'] + pieceResp.begin;
-    writeBlock(this.torrent, this.rootPath, pieceResp.block, offset);
+    try {
+      this.writer.write(pieceResp.block, offset);
+    } catch (err) {
+      this._fail(err);
+      return;
+    }
 
     if (this.pieces.isPieceDone(pieceResp.index)) {
-      state.save(this.rootPath, this.pieces.completedBitfield());
       this._emitProgress();
     }
 
@@ -444,42 +468,4 @@ function isHandshake(msg) {
 
 function blockKey(pieceBlock) {
   return `${pieceBlock.index}:${pieceBlock.begin}`;
-}
-
-function writeBlock(torrent, rootPath, block, offset) {
-  const files = torrent.info.files
-    ? torrent.info.files.map(f => ({
-      length: f.length,
-      path: path.join(rootPath, ...f.path.map(p => p.toString('utf8')))
-    }))
-    : [{
-      length: torrent.info.length,
-      path: rootPath
-    }];
-
-  let fileOffset = 0;
-  for (const file of files) {
-    const fileStart = fileOffset;
-    const fileEnd = fileOffset + file.length;
-    const blockStart = offset;
-    const blockEnd = offset + block.length;
-
-    if (blockEnd <= fileStart || blockStart >= fileEnd) {
-      fileOffset += file.length;
-      continue;
-    }
-
-    const overlapStart = Math.max(blockStart, fileStart);
-    const overlapEnd = Math.min(blockEnd, fileEnd);
-    const blockSliceStart = overlapStart - blockStart;
-    const sliceLength = overlapEnd - overlapStart;
-    const fileWriteOffset = overlapStart - fileStart;
-
-    fs.mkdirSync(path.dirname(file.path), { recursive: true });
-    const fd = fs.openSync(file.path, fs.existsSync(file.path) ? 'r+' : 'w');
-    fs.writeSync(fd, block, blockSliceStart, sliceLength, fileWriteOffset);
-    fs.closeSync(fd);
-
-    fileOffset += file.length;
-  }
 }
