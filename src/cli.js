@@ -207,7 +207,12 @@ async function downloadOne(input, options, progressLogger) {
         }
       };
 
-  await download(torrent, rootPath, { log, onProgress, signal: options.signal });
+  await download(torrent, rootPath, {
+    log,
+    onProgress,
+    signal: options.signal,
+    initialPeers: isMagnet ? torrent.discoveredPeers : null
+  });
 
   if (options.json && !options.signal?.aborted) {
     emitJson({ type: 'complete', id, path: rootPath });

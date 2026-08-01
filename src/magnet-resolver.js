@@ -27,7 +27,9 @@ export async function resolveMagnet(magnet, options = {}) {
     throw new Error('No peers found for magnet link');
   }
 
-  return resolveMetadata(magnet, peers, options);
+  const torrent = await resolveMetadata(magnet, peers, options);
+  torrent.discoveredPeers = dedupePeers(peers).map(({ ip, port }) => ({ ip, port }));
+  return torrent;
 }
 
 async function resolveMetadata(magnet, peers, options) {

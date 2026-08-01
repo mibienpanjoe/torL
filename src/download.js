@@ -21,6 +21,7 @@ export default function download(torrent, rootPath, options = {}) {
     useDHT = true,
     dhtBootstrapNodes = undefined,
     peers: injectedPeers = null,
+    initialPeers = null,
     onProgress = () => {},
     signal = undefined,
     saveInterval = 30000,
@@ -31,9 +32,15 @@ export default function download(torrent, rootPath, options = {}) {
     const trackerController = new AbortController();
     const shutdownController = new AbortController();
 
-    const peersPromise = injectedPeers
-      ? Promise.resolve({ peers: injectedPeers, interval: null })
-      : getPeers(torrent, useDHT, trackerController, dhtBootstrapNodes);
+    const hasInitialPeers = !injectedPeers && Array.isArray(initialPeers) && initialPeers.length > 0;
+    let peersPromise;
+    if (injectedPeers) {
+      peersPromise = Promise.resolve({ peers: injectedPeers, interval: null });
+    } else if (hasInitialPeers) {
+      peersPromise = Promise.resolve({ peers: initialPeers, interval: null });
+    } else {
+      peersPromise = getPeers(torrent, useDHT, trackerController, dhtBootstrapNodes);
+    }
 
     if (signal) {
       signal.addEventListener('abort', () => {
@@ -70,10 +77,18 @@ export default function download(torrent, rootPath, options = {}) {
       pool.addPeers(peers);
       pool.start();
 
-      const ms = overrideAnnounceInterval !== null ? overrideAnnounceInterval : (interval && interval > 0 ? interval * 1000 : 0);
+      let ms = interval && interval > 0 ? interval * 1000 : 0;
+      if (hasInitialPeers) ms = 30000;
+      if (overrideAnnounceInterval !== null) ms = overrideAnnounceInterval;
       if (ms > 0) {
         pool.scheduleAnnounce(ms, (done) => {
-          tracker.getPeers(torrent, (newPeers) => done(newPeers), trackerController.signal);
+          if (hasInitialPeers && (!torrent.announce || torrent.announce.length === 0)) {
+            getPeers(torrent, useDHT, trackerController, dhtBootstrapNodes)
+              .then(({ peers }) => done(peers))
+              .catch(() => done([]));
+          } else {
+            tracker.getPeers(torrent, (newPeers) => done(newPeers), trackerController.signal);
+          }
         });
       }
     }).catch(reject);
@@ -101,23 +116,47 @@ async function getPeers(torrent, useDHT, trackerController, dhtBootstrapNodes) {
     return trackerPromise;
   }
 
-  const dhtClient = new DHTClient(dhtBootstrapNodes ? { bootstrapNodes: dhtBootstrapNodes } : {});
-  await dhtClient.start();
-  const dhtPeers = await new Promise((resolve) => {
-    dhtClient.findPeers(torrent, resolve);
-  });
-  dhtClient.stop();
+  const dhtLookup = startDhtLookup(torrent, dhtBootstrapNodes);
+  const first = await Promise.race([
+    trackerPromise.then(result => ({ source: 'tracker', ...result })),
+    dhtLookup.promise.then(peers => ({ source: 'dht', peers, interval: null }))
+  ]);
 
-  const trackerResult = await trackerPromise;
-  const allPeers = [...trackerResult.peers];
-  const seen = new Set(allPeers.map(p => `${p.ip}:${p.port}`));
-  for (const peer of dhtPeers) {
-    if (!seen.has(`${peer.ip}:${peer.port}`)) {
-      allPeers.push(peer);
-      seen.add(`${peer.ip}:${peer.port}`);
-    }
+  if (first.peers.length > 0) {
+    if (first.source === 'tracker') dhtLookup.cancel();
+    return { peers: first.peers, interval: first.interval };
   }
-  return { peers: allPeers, interval: trackerResult.interval };
+
+  if (first.source === 'tracker') {
+    return { peers: await dhtLookup.promise, interval: null };
+  }
+  return trackerPromise;
+}
+
+function startDhtLookup(torrent, dhtBootstrapNodes) {
+  const dhtClient = new DHTClient(dhtBootstrapNodes ? { bootstrapNodes: dhtBootstrapNodes } : {});
+  let settled = false;
+  let finish;
+  const promise = new Promise(resolve => {
+    finish = (peers = []) => {
+      if (settled) return;
+      settled = true;
+      dhtClient.stop();
+      resolve(peers);
+    };
+
+    dhtClient.start()
+      .then(() => {
+        if (settled) {
+          dhtClient.stop();
+          return;
+        }
+        return dhtClient.findPeers(torrent, finish);
+      })
+      .catch(() => finish());
+  });
+
+  return { promise, cancel: () => finish() };
 }
 
 class PeerPool {

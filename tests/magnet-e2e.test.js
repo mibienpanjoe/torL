@@ -34,9 +34,9 @@ describe('magnet end-to-end', () => {
     const metadataPeer = await createMockMetadataPeer(torrent);
     const filePeer = await createMockPeer(torrent, data);
     try {
-      const resolved = await resolveMagnet(magnet, { peers: [metadataPeer] });
+      const resolved = await resolveMagnet(magnet, { peers: [metadataPeer, filePeer] });
       await download(resolved, path.join(tmpDir, resolved.name), {
-        peers: [filePeer],
+        initialPeers: resolved.discoveredPeers,
         useDHT: false,
         log: () => {}
       });

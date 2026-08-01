@@ -206,6 +206,31 @@ describe('download', () => {
     }
   });
 
+  it('starts from tracker peers without waiting for a slow DHT lookup', async () => {
+    const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'single-file.torrent'));
+    const data = Buffer.from('Hello, World!');
+    const peer = await createMockPeer(torrent, data);
+    const tracker = await createMockTracker(0, [{ ip: peer.ip, port: peer.port }]);
+    torrent.announce = Buffer.from(tracker.url);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'torl-tracker-first-'));
+    const destPath = path.join(tmpDir, 'test.txt');
+    const startedAt = Date.now();
+
+    try {
+      await download(torrent, destPath, {
+        useDHT: true,
+        dhtBootstrapNodes: [{ ip: '127.0.0.1', port: 1 }]
+      });
+      assert.ok(Date.now() - startedAt < 1500, 'download waited for DHT despite tracker peers');
+      assert.deepStrictEqual(fs.readFileSync(destPath), data);
+    } finally {
+      tracker.close();
+      peer.close();
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
+    }
+  });
+
   it('saves state on graceful shutdown and resumes from it', async () => {
     const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'single-file.torrent'));
     const data = Buffer.from('Hello, World!');

@@ -23,6 +23,7 @@ describe('magnet-resolver', () => {
       assert.strictEqual(resolved.name, 'test.txt');
       assert.strictEqual(resolved.infoHash.toString('hex'), infoHash.toString('hex'));
       assert.deepStrictEqual(resolved['announce-list'], [[Buffer.from('udp://tracker.example.com:80')]]);
+      assert.deepStrictEqual(resolved.discoveredPeers, [{ ip: peer.ip, port: peer.port }]);
     } finally {
       peer.close();
     }
