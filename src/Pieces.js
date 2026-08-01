@@ -38,10 +38,13 @@ export default class Pieces {
     this._received[pieceBlock.index][blockIndex] = true;
   }
 
+  releaseRequested(pieceBlock) {
+    const blockIndex = pieceBlock.begin / tp.BLOCK_LEN;
+    this._requested[pieceBlock.index][blockIndex] =
+      this._received[pieceBlock.index][blockIndex];
+  }
+
   needed(pieceBlock) {
-    if (this._requested.every(blocks => blocks.every(i => i))) {
-      this._requested = this._received.map(blocks => blocks.slice());
-    }
     const blockIndex = pieceBlock.begin / tp.BLOCK_LEN;
     return !this._requested[pieceBlock.index][blockIndex];
   }

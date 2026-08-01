@@ -24,7 +24,8 @@ export default function download(torrent, rootPath, options = {}) {
     peers: injectedPeers = null,
     onProgress = () => {},
     signal = undefined,
-    saveInterval = 30000
+    saveInterval = 30000,
+    requestPipeline = 16
   } = options;
 
   return new Promise((resolve, reject) => {
@@ -64,7 +65,8 @@ export default function download(torrent, rootPath, options = {}) {
         onError: reject,
         trackerController,
         shutdownController,
-        saveInterval
+        saveInterval,
+        requestPipeline
       });
       pool.addPeers(peers);
       pool.start();
@@ -136,6 +138,7 @@ class PeerPool {
     this.shutdownController = options.shutdownController;
     this.totalSize = torrentSize(torrent);
     this.totalPieces = torrent.info.pieces.length / 20;
+    this.requestPipeline = Math.max(1, options.requestPipeline);
 
     this.availablePeers = [];
     this.activePeers = new Map();
@@ -210,7 +213,7 @@ class PeerPool {
     this.retryCounts.set(id, this.retryCounts.get(id) + 1);
     const socket = new net.Socket();
     const queue = new Queue(this.torrent, this.rarityMap, id);
-    this.activePeers.set(id, { socket, peer, queue });
+    this.activePeers.set(id, { socket, peer, queue, outstanding: new Map() });
 
     socket.on('error', err => {
       this.log(`peer ${id} error: ${err.message}`);
@@ -233,11 +236,15 @@ class PeerPool {
   _handleDisconnect(id) {
     const peer = this.activePeers.get(id);
     if (!peer) return;
+    this._releaseOutstanding(peer);
     this.activePeers.delete(id);
     this.rarityMap.removePeer(id);
     try { peer.socket.end(); } catch (e) {}
     this.availablePeers.push(peer.peer);
     this._scheduleRetry(id);
+    for (const activePeer of this.activePeers.values()) {
+      this._fillPipeline(activePeer);
+    }
     this._checkProgress();
     this.onProgress({ type: 'peer', action: 'disconnected', peer: id });
     this._emitProgress();
@@ -346,12 +353,67 @@ class PeerPool {
       socket.write(message.buildInterested());
     } else {
       const m = message.parse(msg);
-      if (m.id === 0) chokeHandler(socket);
-      if (m.id === 1) unchokeHandler(socket, this.torrent, this.pieces, queue, this.rootPath);
-      if (m.id === 4) haveHandler(socket, this.torrent, this.pieces, queue, this.rootPath, m.payload);
-      if (m.id === 5) bitfieldHandler(socket, this.torrent, this.pieces, queue, this.rootPath, m.payload);
-      if (m.id === 7) pieceHandler(socket, this.torrent, this.pieces, queue, this.rootPath, m.payload, this._checkProgress.bind(this), this._emitProgress.bind(this));
+      if (m.id === 0) {
+        queue.choked = true;
+        this._releaseOutstanding(peer);
+        for (const activePeer of this.activePeers.values()) {
+          if (activePeer !== peer) this._fillPipeline(activePeer);
+        }
+      }
+      if (m.id === 1) {
+        queue.choked = false;
+        this._fillPipeline(peer);
+      }
+      if (m.id === 4) {
+        queue.queue(m.payload.readUInt32BE(0));
+        this._fillPipeline(peer);
+      }
+      if (m.id === 5) {
+        m.payload.forEach((byte, i) => {
+          for (let bit = 0; bit < 8; bit++) {
+            if (byte & (0x80 >> bit)) queue.queue(i * 8 + bit);
+          }
+        });
+        this._fillPipeline(peer);
+      }
+      if (m.id === 7) this._handlePiece(peer, m.payload);
     }
+  }
+
+  _handlePiece(peer, pieceResp) {
+    const key = blockKey(pieceResp);
+    if (!peer.outstanding.delete(key)) return;
+
+    this.pieces.addReceived(pieceResp);
+    const offset = pieceResp.index * this.torrent.info['piece length'] + pieceResp.begin;
+    writeBlock(this.torrent, this.rootPath, pieceResp.block, offset);
+
+    if (this.pieces.isPieceDone(pieceResp.index)) {
+      state.save(this.rootPath, this.pieces.completedBitfield());
+      this._emitProgress();
+    }
+
+    this._checkProgress();
+    if (!this.complete) this._fillPipeline(peer);
+  }
+
+  _fillPipeline(peer) {
+    if (this.complete || peer.queue.choked) return;
+
+    while (peer.outstanding.size < this.requestPipeline) {
+      const pieceBlock = peer.queue.deque(this.pieces);
+      if (!pieceBlock) return;
+      peer.socket.write(message.buildRequest(pieceBlock));
+      this.pieces.addRequested(pieceBlock);
+      peer.outstanding.set(blockKey(pieceBlock), pieceBlock);
+    }
+  }
+
+  _releaseOutstanding(peer) {
+    for (const pieceBlock of peer.outstanding.values()) {
+      this.pieces.releaseRequested(pieceBlock);
+    }
+    peer.outstanding.clear();
   }
 }
 
@@ -380,60 +442,8 @@ function isHandshake(msg) {
          msg.toString('utf8', 1, 20) === 'BitTorrent protocol';
 }
 
-function chokeHandler(socket) {
-  socket.end();
-}
-
-function unchokeHandler(socket, torrent, pieces, queue, rootPath) {
-  queue.choked = false;
-  requestPiece(socket, torrent, pieces, queue, rootPath);
-}
-
-function haveHandler(socket, torrent, pieces, queue, rootPath, payload) {
-  const pieceIndex = payload.readUInt32BE(0);
-  const queueEmpty = queue.length() === 0;
-  queue.queue(pieceIndex);
-  if (queueEmpty) requestPiece(socket, torrent, pieces, queue, rootPath);
-}
-
-function bitfieldHandler(socket, torrent, pieces, queue, rootPath, payload) {
-  const queueEmpty = queue.length() === 0;
-  payload.forEach((byte, i) => {
-    let b = byte;
-    for (let j = 0; j < 8; j++) {
-      if (b % 2) queue.queue(i * 8 + 7 - j);
-      b = Math.floor(b / 2);
-    }
-  });
-  if (queueEmpty) requestPiece(socket, torrent, pieces, queue, rootPath);
-}
-
-function pieceHandler(socket, torrent, pieces, queue, rootPath, pieceResp, onProgress = () => {}, emitProgress = () => {}) {
-  pieces.addReceived(pieceResp);
-
-  const offset = pieceResp.index * torrent.info['piece length'] + pieceResp.begin;
-  writeBlock(torrent, rootPath, pieceResp.block, offset);
-
-  if (pieces.isPieceDone(pieceResp.index)) {
-    state.save(rootPath, pieces.completedBitfield());
-    emitProgress();
-  }
-
-  if (pieces.isDone()) {
-    onProgress();
-  } else {
-    requestPiece(socket, torrent, pieces, queue, rootPath);
-  }
-}
-
-function requestPiece(socket, torrent, pieces, queue, rootPath) {
-  if (queue.choked) return null;
-
-  const pieceBlock = queue.deque(pieces);
-  if (pieceBlock) {
-    socket.write(message.buildRequest(pieceBlock));
-    pieces.addRequested(pieceBlock);
-  }
+function blockKey(pieceBlock) {
+  return `${pieceBlock.index}:${pieceBlock.begin}`;
 }
 
 function writeBlock(torrent, rootPath, block, offset) {

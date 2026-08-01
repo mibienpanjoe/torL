@@ -6,9 +6,11 @@ import * as message from '../../src/message.js';
 import * as torrentParser from '../../src/torrent-parser.js';
 
 export function createMockPeer(torrent, data, options = {}) {
-  const { port = 0, delayMs = 0, pieces = null } = options;
+  const { port = 0, delayMs = 0, requestDelayMs = 0, pieces = null } = options;
   const nPieces = torrent.info.pieces.length / 20;
   const availablePieces = new Set(pieces || Array.from({ length: nPieces }, (_, i) => i));
+  let pendingRequests = 0;
+  let maxPendingRequests = 0;
   const server = net.createServer(socket => {
     let receivedHandshake = false;
     let savedBuf = Buffer.alloc(0);
@@ -52,11 +54,18 @@ export function createMockPeer(torrent, data, options = {}) {
             if (!availablePieces.has(m.payload.index)) return;
             const offset = m.payload.index * torrent.info['piece length'] + m.payload.begin;
             const block = data.slice(offset, offset + m.payload.length);
-            socket.write(message.buildPiece({
-              index: m.payload.index,
-              begin: m.payload.begin,
-              block
-            }));
+            pendingRequests++;
+            maxPendingRequests = Math.max(maxPendingRequests, pendingRequests);
+            setTimeout(() => {
+              pendingRequests--;
+              if (!socket.destroyed) {
+                socket.write(message.buildPiece({
+                  index: m.payload.index,
+                  begin: m.payload.begin,
+                  block
+                }));
+              }
+            }, requestDelayMs);
           }
         }
       }
@@ -73,6 +82,7 @@ export function createMockPeer(torrent, data, options = {}) {
       resolve({
         ip: '127.0.0.1',
         port: address.port,
+        getMaxPendingRequests: () => maxPendingRequests,
         close: () => {
           if (!closed) {
             closed = true;

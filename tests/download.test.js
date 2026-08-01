@@ -16,6 +16,41 @@ import { createMockDHTNode } from './mocks/dht.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 describe('download', () => {
+  it('pipelines block requests to keep a latent peer busy', async () => {
+    const blockCount = 8;
+    const pieceLength = torrentParser.BLOCK_LEN * blockCount;
+    const data = Buffer.alloc(pieceLength, 0x5a);
+    const torrent = {
+      announce: Buffer.alloc(0),
+      info: {
+        length: data.length,
+        name: Buffer.from('pipeline.bin'),
+        'piece length': pieceLength,
+        pieces: Buffer.alloc(20)
+      }
+    };
+
+    const peer = await createMockPeer(torrent, data, { requestDelayMs: 25 });
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'torl-pipeline-'));
+    const destPath = path.join(tmpDir, 'pipeline.bin');
+
+    try {
+      await download(torrent, destPath, {
+        peers: [{ ip: peer.ip, port: peer.port }],
+        useDHT: false
+      });
+
+      assert.deepStrictEqual(fs.readFileSync(destPath), data);
+      assert.ok(
+        peer.getMaxPendingRequests() >= 4,
+        `expected pipelined requests, observed ${peer.getMaxPendingRequests()} in flight`
+      );
+    } finally {
+      peer.close();
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
+    }
+  });
+
   it('downloads a single-file torrent from mock tracker and peer', async () => {
     const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'single-file.torrent'));
     const data = Buffer.from('Hello, World!');
