@@ -25,7 +25,8 @@ export default function download(torrent, rootPath, options = {}) {
     onProgress = () => {},
     signal = undefined,
     saveInterval = 30000,
-    requestPipeline = 16
+    requestPipeline = 16,
+    requestTimeout = 15000
   } = options;
 
   return new Promise((resolve, reject) => {
@@ -72,7 +73,8 @@ export default function download(torrent, rootPath, options = {}) {
         trackerController,
         shutdownController,
         saveInterval,
-        requestPipeline
+        requestPipeline,
+        requestTimeout
       });
       pool.addPeers(peers);
       pool.start();
@@ -179,6 +181,9 @@ class PeerPool {
     this.requestPipeline = Number.isFinite(options.requestPipeline)
       ? Math.max(1, Math.floor(options.requestPipeline))
       : 16;
+    this.requestTimeout = Number.isFinite(options.requestTimeout)
+      ? Math.max(0, Math.floor(options.requestTimeout))
+      : 15000;
     this.writer = new FileWriter(torrent, rootPath);
 
     this.availablePeers = [];
@@ -254,7 +259,14 @@ class PeerPool {
     this.retryCounts.set(id, this.retryCounts.get(id) + 1);
     const socket = new net.Socket();
     const queue = new Queue(this.torrent, this.rarityMap, id);
-    this.activePeers.set(id, { id, socket, peer, queue, outstanding: new Map() });
+    this.activePeers.set(id, {
+      id,
+      socket,
+      peer,
+      queue,
+      outstanding: new Map(),
+      requestTimer: null
+    });
 
     socket.on('error', err => {
       this.log(`peer ${id} error: ${err.message}`);
@@ -338,7 +350,9 @@ class PeerPool {
     if (this.trackerController) {
       this.trackerController.abort();
     }
-    for (const { socket } of this.activePeers.values()) {
+    for (const peer of this.activePeers.values()) {
+      this._clearRequestTimer(peer);
+      const { socket } = peer;
       try { socket.end(); } catch (e) {}
     }
     this.activePeers.clear();
@@ -370,7 +384,9 @@ class PeerPool {
     if (this.complete) return;
     this.complete = true;
     this._clearTimers();
-    for (const { socket } of this.activePeers.values()) {
+    for (const peer of this.activePeers.values()) {
+      this._clearRequestTimer(peer);
+      const { socket } = peer;
       try { socket.end(); } catch (e) {}
     }
     this.activePeers.clear();
@@ -390,7 +406,9 @@ class PeerPool {
     if (this.trackerController) {
       this.trackerController.abort();
     }
-    for (const { socket } of this.activePeers.values()) {
+    for (const peer of this.activePeers.values()) {
+      this._clearRequestTimer(peer);
+      const { socket } = peer;
       try { socket.end(); } catch (e) {}
     }
     this.activePeers.clear();
@@ -437,7 +455,7 @@ class PeerPool {
     const key = blockKey(pieceResp);
     const requested = peer.outstanding.get(key);
     if (!requested) return;
-    if (pieceResp.block.length !== requested.length) {
+    if (pieceResp.block.length !== requested.pieceBlock.length) {
       this._handleDisconnect(peer.id);
       return;
     }
@@ -465,18 +483,46 @@ class PeerPool {
 
     while (peer.outstanding.size < this.requestPipeline) {
       const pieceBlock = peer.queue.deque(this.pieces);
-      if (!pieceBlock) return;
+      if (!pieceBlock) break;
       peer.socket.write(message.buildRequest(pieceBlock));
       this.pieces.addRequested(pieceBlock);
-      peer.outstanding.set(blockKey(pieceBlock), pieceBlock);
+      peer.outstanding.set(blockKey(pieceBlock), {
+        pieceBlock,
+        requestedAt: Date.now()
+      });
     }
+    this._scheduleRequestTimeout(peer);
   }
 
   _releaseOutstanding(peer) {
-    for (const pieceBlock of peer.outstanding.values()) {
+    this._clearRequestTimer(peer);
+    for (const { pieceBlock } of peer.outstanding.values()) {
       this.pieces.releaseRequested(pieceBlock);
     }
     peer.outstanding.clear();
+  }
+
+  _scheduleRequestTimeout(peer) {
+    this._clearRequestTimer(peer);
+    if (this.requestTimeout === 0 || peer.outstanding.size === 0) return;
+
+    const oldestRequest = Math.min(
+      ...Array.from(peer.outstanding.values(), request => request.requestedAt)
+    );
+    const delay = Math.max(1, this.requestTimeout - (Date.now() - oldestRequest));
+    peer.requestTimer = setTimeout(() => {
+      peer.requestTimer = null;
+      if (this.complete || this.activePeers.get(peer.id) !== peer) return;
+      this.log(`peer ${peer.id} timed out with ${peer.outstanding.size} pending blocks`);
+      peer.socket.destroy();
+      this._handleDisconnect(peer.id);
+    }, delay);
+  }
+
+  _clearRequestTimer(peer) {
+    if (!peer.requestTimer) return;
+    clearTimeout(peer.requestTimer);
+    peer.requestTimer = null;
   }
 }
 

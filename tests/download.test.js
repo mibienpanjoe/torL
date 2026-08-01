@@ -121,6 +121,41 @@ describe('download', () => {
     }
   });
 
+  it('reassigns pipelined blocks when a peer stops responding', async () => {
+    const blockCount = 8;
+    const pieceLength = torrentParser.BLOCK_LEN * blockCount;
+    const data = Buffer.alloc(pieceLength, 0x31);
+    const torrent = {
+      announce: Buffer.alloc(0),
+      info: {
+        length: data.length,
+        name: Buffer.from('timeout.bin'),
+        'piece length': pieceLength,
+        pieces: Buffer.alloc(20)
+      }
+    };
+    const stalledPeer = await createMockPeer(torrent, data, { requestDelayMs: 1000 });
+    const healthyPeer = await createMockPeer(torrent, data, { delayMs: 20 });
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'torl-timeout-'));
+    const destPath = path.join(tmpDir, 'timeout.bin');
+    const startedAt = Date.now();
+
+    try {
+      await download(torrent, destPath, {
+        peers: [stalledPeer, healthyPeer],
+        useDHT: false,
+        maxRetries: 1,
+        requestTimeout: 50
+      });
+      assert.ok(Date.now() - startedAt < 500, 'stalled requests were not reassigned promptly');
+      assert.deepStrictEqual(fs.readFileSync(destPath), data);
+    } finally {
+      stalledPeer.close();
+      healthyPeer.close();
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
+    }
+  });
+
   it('re-announces to the tracker and refreshes the peer list', async () => {
     const torrent = torrentParser.open(path.join(__dirname, 'fixtures', 'single-file.torrent'));
     const data = Buffer.from('Hello, World!');
