@@ -183,7 +183,7 @@ export async function downloadAll(inputs, options, progressLogger, downloadOneFn
 async function downloadOne(input, options, progressLogger) {
   const isMagnet = input.startsWith('magnet:');
   const torrent = isMagnet
-    ? await resolveMagnet(parseMagnetLink(input))
+    ? await resolveMagnet(parseMagnetLink(input), { signal: options.signal })
     : torrentParser.open(input);
 
   const targetName = isMagnet

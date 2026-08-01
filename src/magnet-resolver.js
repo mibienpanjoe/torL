@@ -7,15 +7,15 @@ import bencode from 'bencode';
 import * as util from './util.js';
 import { downloadMetadata } from './metadata-downloader.js';
 
-const DEFAULT_PORT = 6881;
 const METADATA_TIMEOUT = 10000;
-const PEER_DEADLINE = 45000;
 const TRACKER_QUERY_TIMEOUT = 5000;
+const DHT_QUERY_TIMEOUT = 30000;
 
 export async function resolveMagnet(magnet, options = {}) {
   const useDHT = options.useDHT !== false;
   const dhtBootstrapNodes = options.dhtBootstrapNodes;
   const signal = options.signal;
+  throwIfAborted(signal);
 
   const torrentStub = buildTorrentStub(magnet);
 
@@ -23,23 +23,57 @@ export async function resolveMagnet(magnet, options = {}) {
     ? options.peers
     : await collectPeers(torrentStub, useDHT, dhtBootstrapNodes, signal);
   if (peers.length === 0) {
+    throwIfAborted(signal);
     throw new Error('No peers found for magnet link');
   }
 
-  const errors = [];
+  return resolveMetadata(magnet, peers, options);
+}
 
-  // Try metadata peers concurrently. First success wins.
-  const metaPromises = peers.map(peer =>
-    downloadMetadata(peer, magnet.infoHash, { timeout: METADATA_TIMEOUT })
-      .then(({ info, metadata }) => buildTorrentFromMagnet(magnet, info, metadata))
-      .catch(err => { errors.push(err.message); throw err; })
+async function resolveMetadata(magnet, peers, options) {
+  const errors = [];
+  const parentSignal = options.signal;
+  const metadataAbort = linkedAbortController(parentSignal);
+  const requestedConcurrency = options.metadataConcurrency ?? 8;
+  const concurrency = Math.min(
+    peers.length,
+    Number.isInteger(requestedConcurrency) && requestedConcurrency > 0 ? requestedConcurrency : 8
   );
+  let nextPeer = 0;
+  let resolved = null;
+
+  async function worker() {
+    while (!metadataAbort.controller.signal.aborted) {
+      const peer = peers[nextPeer++];
+      if (!peer) return;
+      try {
+        const { info, metadata } = await downloadMetadata(peer, magnet.infoHash, {
+          timeout: options.metadataTimeout ?? METADATA_TIMEOUT,
+          signal: metadataAbort.controller.signal
+        });
+        if (!resolved) {
+          resolved = buildTorrentFromMagnet(magnet, info, metadata);
+          metadataAbort.controller.abort();
+        }
+        return;
+      } catch (err) {
+        if (parentSignal?.aborted) throw createAbortError();
+        if (err.name !== 'AbortError') {
+          errors.push(`${peer.ip}:${peer.port}: ${err.message}`);
+        }
+      }
+    }
+  }
 
   try {
-    return await Promise.any(metaPromises);
-  } catch (e) {
-    throw new Error('Failed to download metadata from any peer: ' + errors.join('; '));
+    await Promise.all(Array.from({ length: concurrency }, worker));
+  } finally {
+    metadataAbort.cleanup();
   }
+
+  throwIfAborted(parentSignal);
+  if (resolved) return resolved;
+  throw new Error('Failed to download metadata from any peer: ' + errors.join('; '));
 }
 
 function buildTorrentStub(magnet) {
@@ -68,35 +102,53 @@ function buildTorrentFromMagnet(magnet, info, metadata) {
 }
 
 async function collectPeers(torrentStub, useDHT, dhtBootstrapNodes, signal) {
-  const allPeers = [];
+  const trackerAbort = linkedAbortController(signal);
+  const dhtAbort = linkedAbortController(signal);
+  const trackerSource = {
+    name: 'tracker',
+    promise: queryTrackers(torrentStub, trackerAbort.controller.signal)
+  };
+  const dhtSource = {
+    name: 'dht',
+    promise: useDHT
+      ? queryDHT(torrentStub, dhtBootstrapNodes, dhtAbort.controller.signal)
+      : Promise.resolve([])
+  };
+
+  try {
+    const first = await Promise.race([
+      trackerSource.promise.then(peers => ({ name: trackerSource.name, peers })),
+      dhtSource.promise.then(peers => ({ name: dhtSource.name, peers }))
+    ]);
+    if (first.peers.length > 0) {
+      (first.name === 'tracker' ? dhtAbort : trackerAbort).controller.abort();
+      return dedupePeers(first.peers);
+    }
+
+    const second = first.name === 'tracker'
+      ? await dhtSource.promise
+      : await trackerSource.promise;
+    return dedupePeers(second);
+  } finally {
+    trackerAbort.cleanup();
+    dhtAbort.cleanup();
+  }
+}
+
+async function queryTrackers(torrent, signal) {
+  const urls = getAnnounceUrls(torrent);
+  const results = await Promise.all(urls.map(url => querySingleTracker(torrent, url, signal)));
+  return dedupePeers(results.flat());
+}
+
+function dedupePeers(peers) {
   const seen = new Set();
-
-  function addPeers(peers) {
-    for (const peer of peers) {
-      const id = `${peer.ip}:${peer.port}`;
-      if (!seen.has(id)) {
-        seen.add(id);
-        allPeers.push(peer);
-      }
-    }
-  }
-
-  const promises = [];
-
-  if (torrentStub.announce) {
-    const urls = getAnnounceUrls(torrentStub);
-    for (const url of urls) {
-      promises.push(querySingleTracker(torrentStub, url, signal, addPeers));
-    }
-  }
-
-  if (useDHT) {
-    promises.push(queryDHT(torrentStub, dhtBootstrapNodes, addPeers));
-  }
-
-  await withDeadline(promises, PEER_DEADLINE);
-
-  return allPeers;
+  return peers.filter(peer => {
+    const id = `${peer.ip}:${peer.port}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }
 
 function getAnnounceUrls(torrentStub) {
@@ -115,29 +167,53 @@ function getAnnounceUrls(torrentStub) {
   return urls;
 }
 
-async function querySingleTracker(torrent, url, signal, addPeersFn) {
+async function querySingleTracker(torrent, url, signal) {
+  const trackerSignal = combineSignal(signal, TRACKER_QUERY_TIMEOUT);
   try {
-    const trackerSignal = combineSignal(signal, TRACKER_QUERY_TIMEOUT);
-    const result = await new Promise((resolve) => {
+    return await new Promise((resolve) => {
       getPeersForUrl(torrent, url, (peers) => resolve(peers), trackerSignal.signal);
     });
-    trackerSignal.cleanup();
-    if (result.length > 0) addPeersFn(result);
   } catch (e) {
-    // Silently skip failed/empty trackers.
+    return [];
+  } finally {
+    trackerSignal.cleanup();
   }
 }
 
 function combineSignal(parentSignal, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  if (parentSignal) {
-    parentSignal.addEventListener('abort', () => {
+  const onParentAbort = () => controller.abort();
+  if (parentSignal?.aborted) controller.abort();
+  else parentSignal?.addEventListener('abort', onParentAbort, { once: true });
+  return {
+    signal: controller.signal,
+    cleanup: () => {
       clearTimeout(timer);
-      controller.abort();
-    }, { once: true });
-  }
-  return { signal: controller.signal, cleanup: () => clearTimeout(timer) };
+      parentSignal?.removeEventListener('abort', onParentAbort);
+    }
+  };
+}
+
+function linkedAbortController(parentSignal) {
+  const controller = new AbortController();
+  const onParentAbort = () => controller.abort();
+  if (parentSignal?.aborted) controller.abort();
+  else parentSignal?.addEventListener('abort', onParentAbort, { once: true });
+  return {
+    controller,
+    cleanup: () => parentSignal?.removeEventListener('abort', onParentAbort)
+  };
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw createAbortError();
+}
+
+function createAbortError() {
+  const error = new Error('Magnet resolution aborted');
+  error.name = 'AbortError';
+  return error;
 }
 
 function getPeersForUrl(torrent, url, callback, signal) {
@@ -152,21 +228,33 @@ function getPeersForUrl(torrent, url, callback, signal) {
 }
 
 function udpQueryPeers(urlStr, infoHash, peerId, callback, signal) {
-  const socket = dgram.createSocket('udp4');
   const url = new URL(urlStr);
+  const socket = dgram.createSocket('udp4');
   let closed = false;
-  const timer = setTimeout(() => {
-    if (!closed) { closed = true; try { socket.close(); } catch (e) {} callback([]); }
-  }, TRACKER_QUERY_TIMEOUT);
+  let expectedTransactionId;
 
-  if (signal) {
-    signal.addEventListener('abort', () => {
-      if (!closed) { closed = true; clearTimeout(timer); try { socket.close(); } catch (e) {} callback([]); }
-    }, { once: true });
+  function finish(peers = []) {
+    if (closed) return;
+    closed = true;
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+    try { socket.close(); } catch (e) {}
+    callback(peers);
   }
 
+  const timer = setTimeout(() => finish(), TRACKER_QUERY_TIMEOUT);
+  const onAbort = () => finish();
+
+  if (signal?.aborted) finish();
+  else signal?.addEventListener('abort', onAbort, { once: true });
+
+  socket.on('error', () => finish());
+
   function udpSend(message) {
-    socket.send(message, 0, message.length, url.port, url.hostname);
+    if (closed) return;
+    socket.send(message, 0, message.length, url.port, url.hostname, err => {
+      if (err) finish();
+    });
   }
 
   const connBuf = Buffer.alloc(16);
@@ -174,16 +262,34 @@ function udpQueryPeers(urlStr, infoHash, peerId, callback, signal) {
   connBuf.writeUInt32BE(0x27101980, 4);
   connBuf.writeUInt32BE(0, 8);
   crypto.randomBytes(4).copy(connBuf, 12);
+  expectedTransactionId = connBuf.readUInt32BE(12);
   udpSend(connBuf);
 
   socket.on('message', response => {
+    if (response.length < 8) {
+      finish();
+      return;
+    }
     const action = response.readUInt32BE(0);
+    const transactionId = response.readUInt32BE(4);
+    if (transactionId !== expectedTransactionId) return;
+
+    if (action === 3) {
+      finish();
+      return;
+    }
+
     if (action === 0) {
-      const connId = response.slice(8);
-      const announce = Buffer.allocUnsafe(98);
+      if (response.length < 16) {
+        finish();
+        return;
+      }
+      const connId = response.subarray(8, 16);
+      const announce = Buffer.alloc(98);
       connId.copy(announce, 0);
       announce.writeUInt32BE(1, 8);
       crypto.randomBytes(4).copy(announce, 12);
+      expectedTransactionId = announce.readUInt32BE(12);
       infoHash.copy(announce, 16);
       peerId.copy(announce, 36);
       Buffer.alloc(8, 0xff).copy(announce, 64); // left = unknown
@@ -194,20 +300,19 @@ function udpQueryPeers(urlStr, infoHash, peerId, callback, signal) {
       announce.writeUInt16BE(6881, 96);
       udpSend(announce);
     } else if (action === 1) {
-      if (!closed) {
-        closed = true;
-        clearTimeout(timer);
-        try { socket.close(); } catch (e) {}
-        const peers = [];
-        const raw = response.slice(20);
-        for (let i = 0; i + 6 <= raw.length; i += 6) {
-          peers.push({
-            ip: raw.slice(i, i + 4).join('.'),
-            port: raw.readUInt16BE(i + 4)
-          });
-        }
-        callback(peers);
+      if (response.length < 20) {
+        finish();
+        return;
       }
+      const peers = [];
+      const raw = response.subarray(20);
+      for (let i = 0; i + 6 <= raw.length; i += 6) {
+        peers.push({
+          ip: raw.subarray(i, i + 4).join('.'),
+          port: raw.readUInt16BE(i + 4)
+        });
+      }
+      finish(peers);
     }
   });
 }
@@ -250,29 +355,30 @@ function urlEncode(buf) {
   return Array.from(buf).map(b => '%' + b.toString(16).padStart(2, '0')).join('');
 }
 
-async function queryDHT(torrent, dhtBootstrapNodes, addPeersFn) {
+async function queryDHT(torrent, dhtBootstrapNodes, signal) {
+  let client;
+  let timer;
+  let onAbort;
   try {
+    if (signal?.aborted) return [];
     const { DHTClient } = await import('./dht.js');
-    const client = new DHTClient(dhtBootstrapNodes ? { bootstrapNodes: dhtBootstrapNodes } : {});
+    client = new DHTClient(dhtBootstrapNodes ? { bootstrapNodes: dhtBootstrapNodes } : {});
     await client.start();
-    const peers = await new Promise((resolve) => {
-      const timer = setTimeout(() => resolve([]), 30000);
-      client.findPeers(torrent, (result) => {
-        clearTimeout(timer);
-        resolve(result);
-      });
+    const lookup = new Promise((resolve, reject) => {
+      timer = setTimeout(() => resolve([]), DHT_QUERY_TIMEOUT);
+      client.findPeers(torrent, resolve).catch(reject);
     });
-    client.stop();
-    if (peers.length > 0) addPeersFn(peers);
+    const aborted = new Promise(resolve => {
+      onAbort = () => resolve([]);
+      if (signal?.aborted) onAbort();
+      else signal?.addEventListener('abort', onAbort, { once: true });
+    });
+    return await Promise.race([lookup, aborted]);
   } catch (e) {
-    // DHT failure is non-fatal.
+    return [];
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+    client?.stop();
   }
-}
-
-async function withDeadline(promises, timeoutMs) {
-  if (promises.length === 0) return;
-  await Promise.race([
-    Promise.allSettled(promises),
-    new Promise(resolve => setTimeout(resolve, timeoutMs))
-  ]);
 }

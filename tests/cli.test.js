@@ -2,7 +2,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseArgs, getUsage, run, getDefaultOutputDir } from '../src/cli.js';
+import { parseArgs, getUsage, run, _run, getDefaultOutputDir } from '../src/cli.js';
 
 describe('cli', () => {
   it('parses a torrent file argument', () => {
@@ -88,6 +88,23 @@ describe('cli', () => {
     await assert.rejects(
       run(['node', 'torl-cli', 'file.torrent', '--json', '--quiet']),
       /Cannot use --json and --quiet together/
+    );
+  });
+
+  it('propagates an aborted signal into magnet resolution', async () => {
+    const controller = new AbortController();
+    const pending = _run({
+      inputs: ['magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678'],
+      concurrency: 1,
+      quiet: true,
+      json: false,
+      signal: controller.signal
+    }, null);
+    setImmediate(() => controller.abort());
+
+    await assert.rejects(
+      pending,
+      /Magnet resolution aborted/
     );
   });
 });

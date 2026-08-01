@@ -17,7 +17,7 @@ export function createMockTracker(port = 0, peers = [], options = {}) {
     if (action === 0) {
       const response = Buffer.alloc(16);
       response.writeUInt32BE(0, 0);
-      response.writeUInt32BE(transactionId, 4);
+      response.writeUInt32BE(options.wrongTransactionId ? transactionId + 1 : transactionId, 4);
       CONNECTION_ID.copy(response, 8);
       socket.send(response, 0, response.length, rinfo.port, rinfo.address);
       return;
@@ -27,7 +27,7 @@ export function createMockTracker(port = 0, peers = [], options = {}) {
       announceCount++;
       const response = Buffer.alloc(20 + peers.length * 6);
       response.writeUInt32BE(1, 0);
-      response.writeUInt32BE(transactionId, 4);
+      response.writeUInt32BE(options.wrongTransactionId ? transactionId + 1 : transactionId, 4);
       response.writeUInt32BE(interval, 8);
       response.writeUInt32BE(0, 12); // leechers
       response.writeUInt32BE(peers.length, 16); // seeders
