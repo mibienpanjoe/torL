@@ -56,11 +56,6 @@ func main() {
 		}
 	}
 
-	if len(inputs) == 0 {
-		printUsage(programName)
-		os.Exit(1)
-	}
-
 	model := torl.NewModel(torlPath, inputs, outputDir)
 
 	// Forward OS signals to the model so paused processes save state.
@@ -101,7 +96,8 @@ func main() {
 }
 
 func printUsage(name string) {
-	fmt.Fprintf(os.Stderr, "Usage: %s [options] <torrent-file|magnet-link>...\n\n", name)
+	fmt.Fprintf(os.Stderr, "Usage: %s [options] [torrent-file|magnet-link]...\n\n", name)
+	fmt.Fprintf(os.Stderr, "Running without inputs opens the interactive dashboard.\n\n")
 	fmt.Fprintf(os.Stderr, "Options:\n")
 	fmt.Fprintf(os.Stderr, "  -o, --output <dir>  Output directory (default: Downloads)\n")
 	fmt.Fprintf(os.Stderr, "  -torl-path <path>    Path to the torl-cli executable (default: torl-cli)\n")

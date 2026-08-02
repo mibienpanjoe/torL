@@ -2,10 +2,10 @@
 
 ## Task 1: Launchable empty dashboard
 
-- [ ] `torl` forwards zero inputs to the TUI.
-- [ ] The Go launcher accepts zero inputs.
-- [ ] Empty state lists the available add actions.
-- [ ] Dashboard stays open when the queue is empty or finishes.
+- [x] `torl` forwards zero inputs to the TUI.
+- [x] The Go launcher accepts zero inputs.
+- [x] Empty state lists the available add actions.
+- [x] Dashboard stays open when the queue is empty or finishes.
 - Verify: focused Node test, `go test ./torl`, `go build ./...`.
 
 ## Task 2: Dynamic source input

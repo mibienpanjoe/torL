@@ -1,6 +1,8 @@
 package torl
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -96,6 +98,36 @@ func TestModelQuit(t *testing.T) {
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatalf("expected quit command")
+	}
+}
+
+func TestEmptyModelShowsAddActions(t *testing.T) {
+	m := NewModel("torl", nil, ".")
+	view := m.View()
+
+	if !strings.Contains(view, "No downloads yet") {
+		t.Fatalf("empty state is missing from view: %q", view)
+	}
+	if !strings.Contains(view, "a add") || !strings.Contains(view, "f browse") {
+		t.Fatalf("add actions are missing from view: %q", view)
+	}
+}
+
+func TestModelStaysOpenWhenLastProcessFinishes(t *testing.T) {
+	m := NewModel("torl", []string{"file.torrent"}, ".")
+	_, cmd := m.Update(procDoneMsg{input: "file.torrent"})
+
+	if cmd != nil {
+		t.Fatalf("dashboard should remain open after the queue finishes")
+	}
+}
+
+func TestModelStaysOpenWhenLastProcessFails(t *testing.T) {
+	m := NewModel("torl", []string{"file.torrent"}, ".")
+	_, cmd := m.Update(procErrMsg{input: "file.torrent", err: errors.New("boom")})
+
+	if cmd != nil {
+		t.Fatalf("dashboard should remain open after the queue fails")
 	}
 }
 

@@ -16,14 +16,14 @@ Turn the existing argument-driven progress screen into a long-lived dashboard. T
 
 ### Phase 1: Launchable dashboard
 
-- [ ] Make zero positional arguments valid in both launchers.
-- [ ] Render an actionable empty state and keep the dashboard open after work finishes.
-- [ ] Cover launch and empty-state behavior with Node and Go tests.
+- [x] Make zero positional arguments valid in both launchers.
+- [x] Render an actionable empty state and keep the dashboard open after work finishes.
+- [x] Cover launch and empty-state behavior with Node and Go tests.
 
 ### Checkpoint: Dashboard
 
-- [ ] Focused Node and Go tests pass.
-- [ ] `torl` can enter the TUI without inputs.
+- [x] Focused Node and Go tests pass.
+- [x] `torl` can enter the TUI without inputs.
 
 ### Phase 2: Add downloads
 

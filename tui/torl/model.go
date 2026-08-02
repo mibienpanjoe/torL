@@ -87,9 +87,9 @@ type Download struct {
 }
 
 type Model struct {
-	TorlPath  string
-	Inputs    []string
-	Output    string
+	TorlPath string
+	Inputs   []string
+	Output   string
 
 	mu           sync.Mutex
 	Downloads    map[string]*Download
@@ -363,9 +363,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingCount--
 		m.mu.Unlock()
 		m.appendMessage(msg.err.Error())
-		if m.pendingCount <= 0 {
-			return m, tea.Quit
-		}
 	case procDoneMsg:
 		m.mu.Lock()
 		d := m.download(msg.input)
@@ -376,9 +373,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.pendingCount--
 		m.mu.Unlock()
-		if m.pendingCount <= 0 {
-			return m, tea.Quit
-		}
 	case errMsg:
 		m.appendMessage(msg.err.Error())
 		return m, tea.Quit
@@ -448,6 +442,10 @@ func (m *Model) View() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("torl"))
 	b.WriteString("\n\n")
+	if len(m.Inputs) == 0 {
+		b.WriteString(labelStyle.Render("No downloads yet") + "\n")
+		b.WriteString(infoStyle.Render("  a add a magnet or path   f browse .torrent files") + "\n\n")
+	}
 
 	for i, input := range m.Inputs {
 		d := m.Downloads[input]
@@ -463,7 +461,7 @@ func (m *Model) View() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(footerStyle.Render("↑↓ select  p pause/resume  q quit"))
+	b.WriteString(footerStyle.Render("a add  f browse  o output  ↑↓ select  p pause/resume  q quit"))
 
 	return panelStyle.Render(b.String())
 }
