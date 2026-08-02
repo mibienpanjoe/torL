@@ -2,6 +2,12 @@
 
 All notable changes to torL are documented in this file.
 
+## [1.3.1] - 2026-08-02
+
+### Changed
+
+- Clarify how to install or update to the latest npm release and streamline the README usage guide.
+
 ## [1.3.0] - 2026-08-02
 
 ### Added
