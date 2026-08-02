@@ -8,6 +8,8 @@ export default class Queue {
     this._rarityMap = rarityMap;
     this._peerId = peerId;
     this._pieces = new Set();
+    this._orderedPieces = [];
+    this._rarityRevision = -1;
     this.choked = true;
   }
 
@@ -20,8 +22,11 @@ export default class Queue {
   }
 
   deque(pieces) {
-    const sorted = this._rarityMap.getRarestPieces(this._pieces);
-    for (const pieceIndex of sorted) {
+    if (this._rarityRevision !== this._rarityMap.revision) {
+      this._orderedPieces = this._rarityMap.getRarestPieces(this._pieces);
+      this._rarityRevision = this._rarityMap.revision;
+    }
+    for (const pieceIndex of this._orderedPieces) {
       const nBlocks = tp.blocksPerPiece(this._torrent, pieceIndex);
       for (let i = 0; i < nBlocks; i++) {
         const block = {

@@ -103,4 +103,29 @@ describe('Queue', () => {
     const block = queue.deque(pieces);
     assert.strictEqual(block.index, 1);
   });
+
+  it('reuses the rarest-first order until availability changes', () => {
+    const torrent = torrentFixture(16384, 2);
+    const rarityMap = new RarityMap(torrent);
+    const queue = new Queue(torrent, rarityMap, 'peer1');
+    const pieces = piecesFixture(torrent);
+    queue.queue(0);
+    queue.queue(1);
+
+    const getRarestPieces = rarityMap.getRarestPieces.bind(rarityMap);
+    let sortCount = 0;
+    rarityMap.getRarestPieces = pieceIndices => {
+      sortCount++;
+      return getRarestPieces(pieceIndices);
+    };
+
+    const first = queue.deque(pieces);
+    pieces.addRequested(first);
+    queue.deque(pieces);
+    assert.strictEqual(sortCount, 1);
+
+    rarityMap.havePiece('peer2', 0);
+    queue.deque(pieces);
+    assert.strictEqual(sortCount, 2);
+  });
 });

@@ -5,6 +5,7 @@ export default class RarityMap {
     this.nPieces = torrent.info.pieces.length / 20;
     this.rarity = new Array(this.nPieces).fill(0);
     this.peerPieces = new Map();
+    this.revision = 0;
   }
 
   addPeerPieces(peerId, pieces) {
@@ -17,6 +18,7 @@ export default class RarityMap {
       }
     }
     this.peerPieces.set(peerId, set);
+    this.revision++;
   }
 
   havePiece(peerId, pieceIndex) {
@@ -29,6 +31,7 @@ export default class RarityMap {
     if (!set.has(pieceIndex)) {
       set.add(pieceIndex);
       this.rarity[pieceIndex]++;
+      this.revision++;
     }
   }
 
@@ -41,6 +44,7 @@ export default class RarityMap {
       }
     }
     this.peerPieces.delete(peerId);
+    this.revision++;
   }
 
   getRarestPieces(pieceIndices) {
