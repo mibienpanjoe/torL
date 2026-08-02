@@ -35,8 +35,9 @@ Use small Go methods that return commands explicitly and keep input modes finite
 ```go
 func (m *Model) openSourceInput() tea.Cmd {
 	m.mode = sourceInputMode
-	m.input.SetValue("")
-	return m.input.Focus()
+	m.inputValue = ""
+	m.inputCursor = 0
+	return nil
 }
 ```
 

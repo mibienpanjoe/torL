@@ -27,19 +27,19 @@ Turn the existing argument-driven progress screen into a long-lived dashboard. T
 
 ### Phase 2: Add downloads
 
-- [ ] Add a source dialog accepting pasted magnets and typed `.torrent` paths.
-- [ ] Validate, normalize, and reject duplicate sources before spawning.
-- [ ] Add a `.torrent`-filtered integrated file picker.
-- [ ] Cover dialog, validation, duplicate, and picker behavior with Go tests.
+- [x] Add a source dialog accepting pasted magnets and typed `.torrent` paths.
+- [x] Validate, normalize, and reject duplicate sources before spawning.
+- [x] Add a `.torrent`-filtered integrated file picker.
+- [x] Cover dialog, validation, duplicate, and picker behavior with Go tests.
 
 ### Checkpoint: Adding
 
-- [ ] Each source route produces the same normalized dynamic-add path.
-- [ ] The existing process-spawn contract remains unchanged.
+- [x] Each source route produces the same normalized dynamic-add path.
+- [x] The existing process-spawn contract remains unchanged.
 
 ### Phase 3: Destination and polish
 
-- [ ] Add an output-directory dialog for future downloads.
+- [x] Add an output-directory dialog for future downloads.
 - [ ] Make footer help and modal hints context-specific.
 - [ ] Update README and help output.
 - [ ] Run all Node/Go tests, Go build, package dry run, and manual TUI smoke check.

@@ -34,6 +34,15 @@ var (
 
 type tickMsg time.Time
 
+type interactionMode int
+
+const (
+	dashboardMode interactionMode = iota
+	sourceInputMode
+	outputInputMode
+	filePickerMode
+)
+
 func NewModel(torlPath string, inputs []string, output string) *Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -41,6 +50,8 @@ func NewModel(torlPath string, inputs []string, output string) *Model {
 
 	prog := progress.New(progress.WithDefaultGradient())
 	prog.Width = 50
+
+	workingDirectory, _ := os.Getwd()
 
 	downloads := make(map[string]*Download)
 	for _, input := range inputs {
@@ -62,6 +73,7 @@ func NewModel(torlPath string, inputs []string, output string) *Model {
 		spinner:      sp,
 		progress:     prog,
 		messages:     []string{},
+		picker:       newTorrentPicker(workingDirectory),
 	}
 }
 
@@ -99,6 +111,11 @@ type Model struct {
 	cursor       int
 	processes    map[string]*exec.Cmd
 	stderrBufs   map[string]string
+	mode         interactionMode
+	inputValue   string
+	inputCursor  int
+	inputError   string
+	picker       *torrentPicker
 
 	spinner  spinner.Model
 	progress progress.Model
@@ -107,7 +124,7 @@ type Model struct {
 func (m *Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.spinner.Tick, m.tick()}
 	for _, input := range m.Inputs {
-		cmds = append(cmds, m.spawnProcess(input))
+		cmds = append(cmds, m.spawnProcess(input, m.Output))
 	}
 	return tea.Batch(cmds...)
 }
@@ -118,9 +135,9 @@ func (m *Model) tick() tea.Cmd {
 	})
 }
 
-func (m *Model) spawnProcess(input string) tea.Cmd {
+func (m *Model) spawnProcess(input, output string) tea.Cmd {
 	return func() tea.Msg {
-		args := []string{input, "--json", "-o", m.Output}
+		args := []string{input, "--json", "-o", output}
 		cmd := exec.Command(m.TorlPath, args...)
 		cmd.Env = os.Environ()
 
@@ -327,10 +344,34 @@ type doneMsg struct{}
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
+		if msg.String() == "ctrl+c" {
 			m.shutdownAll()
 			return m, tea.Quit
+		}
+		if m.mode == sourceInputMode {
+			return m.updateSourceInput(msg)
+		}
+		if m.mode == outputInputMode {
+			return m.updateOutputInput(msg)
+		}
+		if m.mode == filePickerMode {
+			return m.updateFilePicker(msg)
+		}
+		switch msg.String() {
+		case "q":
+			m.shutdownAll()
+			return m, tea.Quit
+		case "a":
+			return m, m.openSourceInput()
+		case "f":
+			if err := m.picker.setDirectory(m.picker.directory); err != nil {
+				m.appendMessage(err.Error())
+				return m, nil
+			}
+			m.mode = filePickerMode
+			m.inputError = ""
+		case "o":
+			return m, m.openOutputInput()
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -388,6 +429,142 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+func (m *Model) openSourceInput() tea.Cmd {
+	m.mode = sourceInputMode
+	m.inputError = ""
+	m.inputValue = ""
+	m.inputCursor = 0
+	return nil
+}
+
+func (m *Model) openOutputInput() tea.Cmd {
+	m.mode = outputInputMode
+	m.inputError = ""
+	m.inputValue = m.Output
+	m.inputCursor = len([]rune(m.inputValue))
+	return nil
+}
+
+func (m *Model) updateSourceInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.inputError = ""
+		m.mode = dashboardMode
+		return m, nil
+	case "enter":
+		cmd, err := m.queueSource(m.inputValue)
+		if err != nil {
+			m.inputError = err.Error()
+			return m, nil
+		}
+		m.inputError = ""
+		m.mode = dashboardMode
+		return m, cmd
+	}
+	m.updateInputValue(msg)
+	return m, nil
+}
+
+func (m *Model) updateOutputInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.inputError = ""
+		m.mode = dashboardMode
+		return m, nil
+	case "enter":
+		output, err := normalizeOutputDirectory(m.inputValue)
+		if err != nil {
+			m.inputError = err.Error()
+			return m, nil
+		}
+		m.Output = output
+		m.inputError = ""
+		m.mode = dashboardMode
+		m.appendMessage("New downloads will be saved to " + output)
+		return m, nil
+	}
+	m.updateInputValue(msg)
+	return m, nil
+}
+
+func (m *Model) updateInputValue(msg tea.KeyMsg) {
+	switch msg.String() {
+	case "left":
+		if m.inputCursor > 0 {
+			m.inputCursor--
+		}
+	case "right":
+		if m.inputCursor < len([]rune(m.inputValue)) {
+			m.inputCursor++
+		}
+	case "home":
+		m.inputCursor = 0
+	case "end":
+		m.inputCursor = len([]rune(m.inputValue))
+	case "backspace":
+		m.inputValue, m.inputCursor = deleteInputRune(m.inputValue, m.inputCursor, -1)
+	case "delete":
+		m.inputValue, m.inputCursor = deleteInputRune(m.inputValue, m.inputCursor, 0)
+	default:
+		if msg.Type == tea.KeyRunes {
+			m.inputValue, m.inputCursor = insertInputRunes(m.inputValue, m.inputCursor, msg.Runes)
+		}
+	}
+}
+
+func (m *Model) updateFilePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.mode = dashboardMode
+		m.inputError = ""
+	case "up", "k":
+		m.picker.Move(-1)
+	case "down", "j":
+		m.picker.Move(1)
+	case "left", "h", "backspace":
+		if err := m.picker.Parent(); err != nil {
+			m.inputError = err.Error()
+		}
+	case "enter":
+		selected, ok, err := m.picker.Select()
+		if err != nil {
+			m.inputError = err.Error()
+			return m, nil
+		}
+		if !ok {
+			return m, nil
+		}
+		cmd, err := m.queueSource(selected)
+		if err != nil {
+			m.inputError = err.Error()
+			return m, nil
+		}
+		m.mode = dashboardMode
+		m.inputError = ""
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m *Model) queueSource(raw string) (tea.Cmd, error) {
+	source, err := normalizeSource(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	if _, exists := m.Downloads[source]; exists {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("download is already in the list")
+	}
+	m.Inputs = append(m.Inputs, source)
+	m.Downloads[source] = &Download{ID: source, Status: "Starting", Peers: []string{}}
+	m.pendingCount++
+	m.mu.Unlock()
+
+	return m.spawnProcess(source, m.Output), nil
 }
 
 func (m *Model) togglePause(idx int) {
@@ -451,6 +628,35 @@ func (m *Model) View() string {
 		d := m.Downloads[input]
 		b.WriteString(m.renderDownload(d, i == m.cursor))
 		b.WriteString("\n")
+	}
+
+	switch m.mode {
+	case sourceInputMode:
+		b.WriteString(labelStyle.Render("Add download") + "\n")
+		b.WriteString(infoStyle.Render("Paste a magnet link or enter a .torrent path") + "\n")
+		b.WriteString("› " + renderInput(m.inputValue, m.inputCursor, 58) + "\n")
+		if m.inputError != "" {
+			b.WriteString(errorStyle.Render(m.inputError) + "\n")
+		}
+		b.WriteString(footerStyle.Render("enter add  esc cancel"))
+		return panelStyle.Render(b.String())
+	case outputInputMode:
+		b.WriteString(labelStyle.Render("Output for new downloads") + "\n")
+		b.WriteString(infoStyle.Render("The directory may be created when a download starts") + "\n")
+		b.WriteString("› " + renderInput(m.inputValue, m.inputCursor, 58) + "\n")
+		if m.inputError != "" {
+			b.WriteString(errorStyle.Render(m.inputError) + "\n")
+		}
+		b.WriteString(footerStyle.Render("enter save  esc cancel"))
+		return panelStyle.Render(b.String())
+	case filePickerMode:
+		b.WriteString(labelStyle.Render("Choose a .torrent file") + "\n")
+		b.WriteString(m.picker.View(10) + "\n")
+		if m.inputError != "" {
+			b.WriteString(errorStyle.Render(m.inputError) + "\n")
+		}
+		b.WriteString(footerStyle.Render("↑↓ navigate  enter open/select  ← parent  esc cancel"))
+		return panelStyle.Render(b.String())
 	}
 
 	if len(m.messages) > 0 {

@@ -2,6 +2,8 @@ package torl
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -128,6 +130,140 @@ func TestModelStaysOpenWhenLastProcessFails(t *testing.T) {
 
 	if cmd != nil {
 		t.Fatalf("dashboard should remain open after the queue fails")
+	}
+}
+
+func TestNormalizeSourceAcceptsMagnet(t *testing.T) {
+	magnet := "magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678"
+	got, err := normalizeSource("  " + magnet + "  ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != magnet {
+		t.Fatalf("expected %q, got %q", magnet, got)
+	}
+}
+
+func TestNormalizeSourceAcceptsQuotedTorrentPath(t *testing.T) {
+	dir := t.TempDir()
+	torrentPath := filepath.Join(dir, "debian image.torrent")
+	if err := os.WriteFile(torrentPath, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := normalizeSource("\"" + torrentPath + "\"")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != torrentPath {
+		t.Fatalf("expected %q, got %q", torrentPath, got)
+	}
+}
+
+func TestNormalizeSourceRejectsInvalidInput(t *testing.T) {
+	for _, input := range []string{"", "magnet:?dn=missing-hash", "notes.txt"} {
+		if _, err := normalizeSource(input); err == nil {
+			t.Fatalf("expected %q to be rejected", input)
+		}
+	}
+}
+
+func TestSourceInputQueuesMagnet(t *testing.T) {
+	m := NewModel("torl", nil, ".")
+	magnet := "magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678"
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if m.mode != sourceInputMode {
+		t.Fatalf("expected source input mode")
+	}
+	m.inputValue = magnet
+	m.inputCursor = len([]rune(magnet))
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if cmd == nil {
+		t.Fatalf("expected a download command")
+	}
+	if len(m.Inputs) != 1 || m.Inputs[0] != magnet {
+		t.Fatalf("source was not queued: %v", m.Inputs)
+	}
+	if m.mode != dashboardMode {
+		t.Fatalf("expected dashboard mode after adding")
+	}
+}
+
+func TestSourceInputRejectsDuplicate(t *testing.T) {
+	magnet := "magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678"
+	m := NewModel("torl", []string{magnet}, ".")
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m.inputValue = magnet
+	m.inputCursor = len([]rune(magnet))
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if cmd != nil {
+		t.Fatalf("duplicate source must not spawn a command")
+	}
+	if !strings.Contains(m.inputError, "already") {
+		t.Fatalf("expected duplicate error, got %q", m.inputError)
+	}
+}
+
+func TestOutputInputChangesFutureDestination(t *testing.T) {
+	m := NewModel("torl", nil, ".")
+	destination := filepath.Join(t.TempDir(), "new downloads")
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	if m.mode != outputInputMode {
+		t.Fatalf("expected output input mode")
+	}
+	m.inputValue = destination
+	m.inputCursor = len([]rune(destination))
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.Output != destination {
+		t.Fatalf("expected output %q, got %q", destination, m.Output)
+	}
+	if m.mode != dashboardMode {
+		t.Fatalf("expected dashboard mode after changing output")
+	}
+}
+
+func TestNormalizeOutputRejectsExistingFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(file, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := normalizeOutputDirectory(file); err == nil {
+		t.Fatalf("expected an existing file to be rejected")
+	}
+}
+
+func TestFilePickerQueuesSelectedTorrent(t *testing.T) {
+	dir := t.TempDir()
+	torrentPath := filepath.Join(dir, "debian.torrent")
+	if err := os.WriteFile(torrentPath, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewModel("torl", nil, ".")
+	m.picker = newTorrentPicker(dir)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if m.mode != filePickerMode {
+		t.Fatalf("expected file picker mode")
+	}
+	for i, entry := range m.picker.entries {
+		if entry.path == torrentPath {
+			m.picker.cursor = i
+		}
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if cmd == nil {
+		t.Fatalf("expected selected torrent to spawn a command")
+	}
+	if len(m.Inputs) != 1 || m.Inputs[0] != torrentPath {
+		t.Fatalf("selected torrent was not queued: %v", m.Inputs)
 	}
 }
 
