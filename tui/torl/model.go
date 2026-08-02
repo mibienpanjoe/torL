@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -229,7 +231,7 @@ func (m *Model) readStderr(stderr io.ReadCloser, input string) {
 func (m *Model) appendMessage(msg string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.messages = append(m.messages, msg)
+	m.messages = append(m.messages, sanitizeTerminalText(msg))
 	if len(m.messages) > 5 {
 		m.messages = m.messages[1:]
 	}
@@ -509,7 +511,22 @@ func (m *Model) updateInputValue(msg tea.KeyMsg) {
 		m.inputValue, m.inputCursor = deleteInputRune(m.inputValue, m.inputCursor, 0)
 	default:
 		if msg.Type == tea.KeyRunes {
+			for _, char := range msg.Runes {
+				if unicode.IsControl(char) {
+					m.inputError = "control characters are not allowed"
+					return
+				}
+			}
+			limit := maxSourceInputRunes
+			if m.mode == outputInputMode {
+				limit = maxPathInputRunes
+			}
+			if len([]rune(m.inputValue))+len(msg.Runes) > limit {
+				m.inputError = "input is too long"
+				return
+			}
 			m.inputValue, m.inputCursor = insertInputRunes(m.inputValue, m.inputCursor, msg.Runes)
+			m.inputError = ""
 		}
 	}
 }
@@ -619,7 +636,7 @@ func (m *Model) View() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("torl"))
 	b.WriteString("\n\n")
-	if len(m.Inputs) == 0 {
+	if len(m.Inputs) == 0 && m.mode == dashboardMode {
 		b.WriteString(labelStyle.Render("No downloads yet") + "\n")
 		b.WriteString(infoStyle.Render("  a add a magnet or path   f browse .torrent files") + "\n\n")
 	}
@@ -680,10 +697,7 @@ func (m *Model) renderDownload(d *Download, selected bool) string {
 		cursor = "▸ "
 	}
 
-	name := d.Name
-	if name == "" {
-		name = path.Base(d.ID)
-	}
+	name := downloadDisplayName(d)
 	header := cursor + labelStyle.Render("File: ") + name
 	if selected {
 		header = selectedStyle.Render(header)
@@ -744,10 +758,26 @@ func formatBytes(n int64) string {
 }
 
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	return s[:max-3] + "..."
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
+}
+
+func downloadDisplayName(d *Download) string {
+	name := d.Name
+	if name == "" {
+		if strings.HasPrefix(strings.ToLower(d.ID), "magnet:") {
+			name = "Magnet download"
+		} else {
+			name = filepath.Base(d.ID)
+		}
+	}
+	return truncate(sanitizeTerminalText(name), 58)
 }
 
 func lastN(items []string, n int) []string {

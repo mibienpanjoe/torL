@@ -18,6 +18,15 @@ func TestTorrentPickerFiltersFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignore"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "evil\x1b[31m.torrent"), []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "node_modules"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	picker := newTorrentPicker(dir)
 	view := picker.View(10)
@@ -27,6 +36,12 @@ func TestTorrentPickerFiltersFiles(t *testing.T) {
 	}
 	if strings.Contains(view, "notes.txt") {
 		t.Fatalf("non-torrent file leaked into picker: %q", view)
+	}
+	if strings.Contains(view, ".git") || strings.Contains(view, "node_modules") {
+		t.Fatalf("technical directories leaked into picker: %q", view)
+	}
+	if strings.ContainsRune(view, '\x1b') {
+		t.Fatalf("terminal control sequence leaked into picker: %q", view)
 	}
 }
 

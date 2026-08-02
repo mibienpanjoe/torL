@@ -161,10 +161,25 @@ func TestNormalizeSourceAcceptsQuotedTorrentPath(t *testing.T) {
 }
 
 func TestNormalizeSourceRejectsInvalidInput(t *testing.T) {
-	for _, input := range []string{"", "magnet:?dn=missing-hash", "notes.txt"} {
+	for _, input := range []string{
+		"",
+		"magnet:?dn=missing-hash",
+		"magnet:?xt=urn:btih:abc",
+		"MAGNET:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678",
+		"magnet:download?xt=urn:btih:1234567890abcdef1234567890abcdef12345678",
+		"magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678\x1b[31m",
+		"notes.txt",
+	} {
 		if _, err := normalizeSource(input); err == nil {
 			t.Fatalf("expected %q to be rejected", input)
 		}
+	}
+}
+
+func TestNormalizeSourceRejectsOversizedMagnet(t *testing.T) {
+	magnet := "magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678&dn=" + strings.Repeat("a", maxSourceInputRunes)
+	if _, err := normalizeSource(magnet); err == nil {
+		t.Fatalf("expected oversized magnet to be rejected")
 	}
 }
 
@@ -267,6 +282,17 @@ func TestFilePickerQueuesSelectedTorrent(t *testing.T) {
 	}
 }
 
+func TestDownloadDisplayNameIsSafeAndCompact(t *testing.T) {
+	if got := downloadDisplayName(&Download{ID: "magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678"}); got != "Magnet download" {
+		t.Fatalf("unexpected magnet display name: %q", got)
+	}
+
+	got := downloadDisplayName(&Download{ID: "evil\x1b[31m.torrent"})
+	if strings.ContainsRune(got, '\x1b') {
+		t.Fatalf("control sequence leaked into display name: %q", got)
+	}
+}
+
 func TestFormatBytes(t *testing.T) {
 	if formatBytes(13) != "13 B" {
 		t.Fatalf("unexpected bytes: %s", formatBytes(13))
@@ -279,6 +305,9 @@ func TestFormatBytes(t *testing.T) {
 func TestTruncate(t *testing.T) {
 	if truncate("hello world", 5) != "he..." {
 		t.Fatalf("unexpected truncate: %s", truncate("hello world", 5))
+	}
+	if truncate("Téléchargement", 5) != "Té..." {
+		t.Fatalf("truncate must preserve UTF-8: %s", truncate("Téléchargement", 5))
 	}
 }
 

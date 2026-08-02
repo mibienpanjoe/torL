@@ -45,10 +45,13 @@ func (p *torrentPicker) setDirectory(directory string) error {
 		entries = append(entries, pickerEntry{name: "..", path: parent, isDir: true})
 	}
 	for _, item := range items {
+		if strings.HasPrefix(item.Name(), ".") || item.Name() == "node_modules" {
+			continue
+		}
 		if !item.IsDir() && !strings.EqualFold(filepath.Ext(item.Name()), ".torrent") {
 			continue
 		}
-		name := item.Name()
+		name := sanitizeTerminalText(item.Name())
 		if item.IsDir() {
 			name += string(filepath.Separator)
 		}

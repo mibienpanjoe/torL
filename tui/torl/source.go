@@ -6,6 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
+)
+
+const (
+	maxSourceInputRunes = 4096
+	maxPathInputRunes   = 4096
 )
 
 func normalizeSource(raw string) (string, error) {
@@ -13,14 +19,27 @@ func normalizeSource(raw string) (string, error) {
 	if source == "" {
 		return "", fmt.Errorf("enter a magnet link or .torrent path")
 	}
+	if len([]rune(source)) > maxSourceInputRunes {
+		return "", fmt.Errorf("download source is too long")
+	}
+	if containsControlRune(source) {
+		return "", fmt.Errorf("control characters are not allowed")
+	}
 
 	if strings.HasPrefix(strings.ToLower(source), "magnet:") {
+		if !strings.HasPrefix(source, "magnet:?") {
+			return "", fmt.Errorf("invalid magnet link")
+		}
 		parsed, err := url.Parse(source)
 		if err != nil || !strings.EqualFold(parsed.Scheme, "magnet") {
 			return "", fmt.Errorf("invalid magnet link")
 		}
-		if !strings.HasPrefix(strings.ToLower(parsed.Query().Get("xt")), "urn:btih:") {
+		infoHash := parsed.Query().Get("xt")
+		if !strings.HasPrefix(strings.ToLower(infoHash), "urn:btih:") {
 			return "", fmt.Errorf("magnet link is missing a BitTorrent info hash")
+		}
+		if !validInfoHash(infoHash[len("urn:btih:"):]) {
+			return "", fmt.Errorf("magnet link has an invalid BitTorrent info hash")
 		}
 		return source, nil
 	}
@@ -52,6 +71,12 @@ func normalizeOutputDirectory(raw string) (string, error) {
 	if value == "" {
 		return "", fmt.Errorf("enter an output directory")
 	}
+	if len([]rune(value)) > maxPathInputRunes {
+		return "", fmt.Errorf("output path is too long")
+	}
+	if containsControlRune(value) {
+		return "", fmt.Errorf("control characters are not allowed")
+	}
 	expanded, err := expandUserPath(value)
 	if err != nil {
 		return "", err
@@ -68,6 +93,46 @@ func normalizeOutputDirectory(raw string) (string, error) {
 		return "", fmt.Errorf("inspect output directory: %w", err)
 	}
 	return filepath.Clean(absolute), nil
+}
+
+func validInfoHash(value string) bool {
+	switch len(value) {
+	case 40:
+		for _, char := range value {
+			if !strings.ContainsRune("0123456789abcdefABCDEF", char) {
+				return false
+			}
+		}
+		return true
+	case 32:
+		for _, char := range value {
+			upper := unicode.ToUpper(char)
+			if (upper < 'A' || upper > 'Z') && (upper < '2' || upper > '7') {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func containsControlRune(value string) bool {
+	for _, char := range value {
+		if unicode.IsControl(char) {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeTerminalText(value string) string {
+	return strings.Map(func(char rune) rune {
+		if unicode.IsControl(char) {
+			return '�'
+		}
+		return char
+	}, value)
 }
 
 func trimOuterQuotes(value string) string {
