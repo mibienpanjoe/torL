@@ -2,6 +2,12 @@
 
 All notable changes to torL are documented in this file.
 
+## [1.3.2] - 2026-08-02
+
+### Fixed
+
+- Correct the README command used to check the installed package version.
+
 ## [1.3.1] - 2026-08-02
 
 ### Changed

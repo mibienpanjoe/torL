@@ -37,7 +37,7 @@ Install or update to the latest published version from npm:
 npm install --global torl-client@latest
 ```
 
-Check the installed version with `torl --version`.
+Check the installed version with `torl-cli --version`.
 
 Or clone and install locally:
 
