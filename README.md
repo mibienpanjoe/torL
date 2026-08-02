@@ -25,18 +25,19 @@
 - **Rarest-first piece selection** — prioritizes the pieces that are least available in the swarm.
 - **Pause & resume** — a `.torl.state` file stores progress; existing data is verified on restart.
 - **NAT traversal** — automatic UPnP IGD and NAT-PMP port mapping helpers.
-- **JSON output** — machine-readable progress events for integration with other tools.
 - **Interactive TUI** — running `torl` opens a dashboard where downloads can be added, monitored, paused, and resumed.
 - **Multiple downloads** — queue or run several torrents and magnet links concurrently.
 - **Fully tested** — fast, deterministic mock tests for the peer wire protocol, trackers, DHT, and NAT.
 
 ## Installation
 
-Install the package globally from npm:
+Install or update to the latest published version from npm:
 
 ```bash
-npm install -g torl-client
+npm install --global torl-client@latest
 ```
+
+Check the installed version with `torl --version`.
 
 Or clone and install locally:
 
@@ -72,19 +73,8 @@ torl file.torrent -o ~/Downloads
 torl file.torrent -torl-path ./bin/torl-cli.js
 ```
 
-You can also expose the TUI through a browser using [ttyd](https://github.com/tsl0922/ttyd):
-
-```bash
-ttyd torl file.torrent -o ~/Downloads
-```
-
-Then open `http://localhost:7681`:
-
-<p align="center">
-  <img src="assets/tui-ttyd-preview.png" alt="torL TUI via ttyd" width="800">
-</p>
-
 Inside the TUI:
+
 - `a` opens a field for pasting a magnet link or entering a `.torrent` path.
 - `f` opens the integrated `.torrent` file picker.
 - `o` changes the output directory for downloads added afterward.
@@ -108,7 +98,6 @@ torl-cli <torrent-file|magnet-link>... [options]
   -o, --output <dir>       Output directory (default: Downloads)
   -c, --concurrency <n>    Max simultaneous downloads (default: 1)
   -q, --quiet              Suppress progress output
-      --json               Emit machine-readable JSON events on stdout
   -h, --help               Show help
   -v, --version            Show version
 ```
@@ -133,24 +122,7 @@ Download multiple torrents concurrently:
 torl-cli a.torrent b.torrent "magnet:?xt=urn:btih:..." -c 3
 ```
 
-Machine-readable JSON events (great for piping into other tools):
-
-```bash
-torl-cli file.torrent --json
-```
-
 Output is written to a directory named after the torrent inside the output directory.
-
-## JSON Events
-
-When using `--json`, each line on stdout is a JSON object:
-
-```json
-{"type":"start","id":"file.torrent","name":"example.iso","total":1073741824,"totalPieces":1024}
-{"type":"progress","id":"file.torrent","downloaded":536870912,"total":1073741824,"percent":0.5,"completedPieces":512,"totalPieces":1024,"activePeers":7,"availablePeers":23}
-{"type":"peer","id":"file.torrent","action":"connected","peer":"192.168.1.42:6881"}
-{"type":"complete","id":"file.torrent","path":"/home/user/Downloads/example.iso"}
-```
 
 ## Development
 
