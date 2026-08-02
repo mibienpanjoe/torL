@@ -114,8 +114,16 @@ export function buildFromSource() {
   return 0;
 }
 
-export async function main() {
-  if (existsSync(binaryPath)) {
+export async function main(options = {}) {
+  const forceBuild = options.forceBuild ?? false;
+  const binaryExists = options.binaryExists ?? existsSync;
+  const build = options.build ?? buildFromSource;
+
+  if (forceBuild) {
+    return build();
+  }
+
+  if (binaryExists(binaryPath)) {
     console.log('torl-tui binary already exists; skipping install.');
     return 0;
   }
@@ -139,9 +147,9 @@ export async function main() {
     console.warn(`Prebuilt binary not available for ${process.platform}-${process.arch}; falling back to build.`);
   }
 
-  return buildFromSource();
+  return build();
 }
 
 if (fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  main().then((code) => process.exit(code));
+  main({ forceBuild: process.argv.includes('--build') }).then((code) => process.exit(code));
 }

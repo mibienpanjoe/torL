@@ -10,9 +10,26 @@ import {
   getAssetName,
   getPackageVersion,
   getPlatform,
+  main,
 } from '../scripts/install-tui.js';
 
 describe('install-tui', () => {
+
+  it('forces a source build when requested', async () => {
+    let builds = 0;
+    const result = await main({
+      forceBuild: true,
+      binaryExists: () => true,
+      build: () => {
+        builds++;
+        return 0;
+      }
+    });
+
+    assert.strictEqual(result, 0);
+    assert.strictEqual(builds, 1);
+  });
+
   it('reads the package version', () => {
     const dir = mkdtempSync(join(tmpdir(), 'torl-install-'));
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '2.3.4' }));
