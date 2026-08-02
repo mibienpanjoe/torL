@@ -26,7 +26,7 @@
 - **Pause & resume** — a `.torl.state` file stores progress; existing data is verified on restart.
 - **NAT traversal** — automatic UPnP IGD and NAT-PMP port mapping helpers.
 - **JSON output** — machine-readable progress events for integration with other tools.
-- **Interactive TUI** — running `torl` opens a terminal UI with progress bars, peer list, and status.
+- **Interactive TUI** — running `torl` opens a dashboard where downloads can be added, monitored, paused, and resumed.
 - **Multiple downloads** — queue or run several torrents and magnet links concurrently.
 - **Fully tested** — fast, deterministic mock tests for the peer wire protocol, trackers, DHT, and NAT.
 
@@ -50,13 +50,19 @@ The `torl` command opens the TUI; the underlying TUI binary (`torl-tui`) is down
 
 ## TUI Usage
 
-Running `torl` opens the interactive terminal UI. It accepts multiple torrent files and magnet links.
+Running `torl` without arguments opens the interactive dashboard:
 
 ```bash
-# open the TUI with a single torrent
+torl
+```
+
+From there, paste a magnet link, type a `.torrent` path, or browse for a torrent file. Positional inputs remain available as a faster way to preload one or more downloads:
+
+```bash
+# preload a single torrent
 torl debian-13.6.0-amd64-netinst.iso.torrent
 
-# pass several inputs
+# preload several inputs
 torl a.torrent b.torrent "magnet:?xt=urn:btih:..."
 
 # override the output directory
@@ -79,9 +85,13 @@ Then open `http://localhost:7681`:
 </p>
 
 Inside the TUI:
+- `a` opens a field for pasting a magnet link or entering a `.torrent` path.
+- `f` opens the integrated `.torrent` file picker.
+- `o` changes the output directory for downloads added afterward.
 - `↑` / `↓` select a torrent.
 - `p` toggles pause/resume for the selected torrent.
 - `q` or `Ctrl+C` pauses all active downloads and exits.
+- `Esc` closes the active input or picker without changing anything.
 - Downloaded progress is saved automatically; re-running the same torrent resumes where it left off.
 
 ## CLI Usage

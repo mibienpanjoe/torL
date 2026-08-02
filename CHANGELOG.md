@@ -2,6 +2,19 @@
 
 All notable changes to torL are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Open `torl` as an interactive dashboard without requiring a torrent or magnet argument.
+- Add downloads from inside the TUI by pasting a magnet, entering a `.torrent` path, or browsing with the integrated file picker.
+- Change the output directory for downloads added later in the same TUI session.
+
+### Changed
+
+- Keep the dashboard open after all downloads complete or fail, so more items can be added without restarting torL.
+- Make `npm run build-tui` always compile the checked-out Go sources instead of reusing a stale binary.
+
 ## [1.2.0] - 2026-08-02
 
 ### Changed

@@ -40,15 +40,15 @@ Turn the existing argument-driven progress screen into a long-lived dashboard. T
 ### Phase 3: Destination and polish
 
 - [x] Add an output-directory dialog for future downloads.
-- [ ] Make footer help and modal hints context-specific.
-- [ ] Update README and help output.
-- [ ] Run all Node/Go tests, Go build, package dry run, and manual TUI smoke check.
+- [x] Make footer help and modal hints context-specific.
+- [x] Update README and help output.
+- [x] Run all Node/Go tests, Go build, package dry run, and manual TUI smoke check.
 
 ### Checkpoint: Complete
 
-- [ ] All specification success criteria are met.
-- [ ] Code and UX review have no blocking findings.
-- [ ] Changes are saved as small, descriptive commits.
+- [x] All specification success criteria are met.
+- [x] Code and UX review have no blocking findings.
+- [x] Changes are saved as small, descriptive commits.
 
 ## Risks and Mitigations
 

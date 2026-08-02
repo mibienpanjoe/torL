@@ -2,7 +2,7 @@
 
 ## Project overview
 - Node.js BitTorrent client, **ESM** (`"type": "module"` in `package.json`).
-- CLI entry point: `node index.js <torrent-file>`; output is written to the torrent's `info.name` path.
+- TUI entry point: `node index.js [torrent-file|magnet-link]...`; with no inputs it opens the interactive dashboard.
 - Supports single-file and multi-file torrents via UDP and HTTP trackers.
 - Published to npm as `torl-client`; CLI binaries are `torl` and `torl-tui`.
 - README.md, CONTRIBUTING.md, and LICENSE are maintained for human contributors; AGENTS.md remains the source of truth for agent context.
@@ -30,11 +30,11 @@
 - `src/magnet-parser.js` parses magnet links (hex and base32 info hashes, display name, tracker URLs).
 - `src/metadata-downloader.js` downloads the `.torrent` info dictionary from a peer via the BEP 10 extension protocol + BEP 9 metadata exchange.
 - `src/magnet-resolver.js` resolves a magnet link to a full torrent object by discovering peers (trackers + DHT) and downloading metadata.
-- `index.js` is the TUI entry point (with `#!/usr/bin/env node`). It locates the `torl-tui` binary and spawns it; use `-o <dir>` to override the default output directory (`~/Downloads`).
+- `index.js` is the TUI entry point (with `#!/usr/bin/env node`). It locates the `torl-tui` binary and spawns it; with no inputs it opens an empty dashboard. Use `-o <dir>` to override the default output directory (`~/Downloads`).
 - `bin/torl-cli.js` is the headless CLI entry point; `src/cli.js` implements the downloader logic with `--help`, `--version`, `--output`, `--quiet`, `--json`, and `--concurrency` flags. It accepts multiple `.torrent` files or `magnet:` links and downloads them sequentially or concurrently.
 - The default output directory for both `torl` and `torl-cli` is the user's `Downloads` folder (`$HOME/Downloads` or `%USERPROFILE%\Downloads`), falling back to the current working directory.
 - `package.json` exposes the `torl` binary via `index.js` and declares Node.js `>=20.0.0` as the engine requirement.
-- `tui/` is a Go module with a Bubble Tea TUI (`torl-tui`) that spawns one `torl-cli` process per torrent. It accepts multiple `.torrent` files and `magnet:` links, builds to a single binary, and requires `torl` in `PATH` or a `--torl-path` override. Pause/resume sends SIGTERM to the individual process; the CLI saves `.torl.state` and exits gracefully. `npm install` downloads a prebuilt `torl-tui` binary from the GitHub release matching the package version; if the download fails, it falls back to building from source when Go is installed.
+- `tui/` is a Go module with a Bubble Tea TUI (`torl-tui`) that spawns one `torl-cli` process per torrent. It opens without inputs and lets users add downloads by pasting a magnet, entering a `.torrent` path, or using the integrated file picker; positional inputs still preload downloads. It builds to a single binary and requires `torl-cli` in `PATH` or a `--torl-path` override. Pause/resume sends SIGTERM to the individual process; the CLI saves `.torl.state` and exits gracefully. `npm install` downloads a prebuilt `torl-tui` binary from the GitHub release matching the package version; if the download fails, it falls back to building from source when Go is installed.
 - `tests/mocks/` contains a local UDP tracker, TCP peer, DHT node, UPnP gateway, NAT-PMP gateway, and metadata peer for fast, deterministic integration tests.
 
 ## Dependencies

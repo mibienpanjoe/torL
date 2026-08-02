@@ -26,8 +26,8 @@
 ## Task 4: Output selection and UX polish
 
 - [x] `o` edits the output directory for future additions.
-- [ ] Empty, dashboard, dialog, and picker states have contextual help.
-- [ ] README and command help describe no-argument usage and keys.
+- [x] Empty, dashboard, dialog, and picker states have contextual help.
+- [x] README and command help describe no-argument usage and keys.
 - Verify: all Node/Go tests, Go build, package dry run, manual smoke check.
 
 ## Not Doing
