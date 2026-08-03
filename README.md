@@ -25,7 +25,7 @@
 - **Rarest-first piece selection** — prioritizes the pieces that are least available in the swarm.
 - **Pause & resume** — a `.torl.state` file stores progress; existing data is verified on restart.
 - **NAT traversal** — automatic UPnP IGD and NAT-PMP port mapping helpers.
-- **Interactive TUI** — running `torl` opens a dashboard where downloads can be added, monitored, paused, and resumed.
+- **Interactive TUI** — running `torl` opens a dashboard where downloads can be added, monitored, paused, and resumed; incomplete items are restored as paused on the next launch.
 - **Multiple downloads** — queue or run several torrents and magnet links concurrently.
 - **Fully tested** — fast, deterministic mock tests for the peer wire protocol, trackers, DHT, and NAT.
 
@@ -82,7 +82,8 @@ Inside the TUI:
 - `p` toggles pause/resume for the selected torrent.
 - `q` or `Ctrl+C` pauses all active downloads and exits.
 - `Esc` closes the active input or picker without changing anything.
-- Downloaded progress is saved automatically; re-running the same torrent resumes where it left off.
+- Incomplete downloads are remembered in the TUI queue (`~/.config/torl/queue.json` on Linux; the platform user config dir elsewhere) and reappear as **Paused** next launch — press `p` to resume.
+- Piece progress is saved in a `.torl.state` file next to the download; resuming continues from verified on-disk data.
 
 ## CLI Usage
 

@@ -46,6 +46,13 @@ const (
 )
 
 func NewModel(torlPath string, inputs []string, output string) *Model {
+	queuePath, _ := defaultQueuePath()
+	return NewModelWithQueuePath(torlPath, inputs, output, queuePath)
+}
+
+// NewModelWithQueuePath builds a model that persists incomplete downloads at queuePath.
+// An empty queuePath disables persistence (useful in tests).
+func NewModelWithQueuePath(torlPath string, inputs []string, output string, queuePath string) *Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
@@ -56,26 +63,66 @@ func NewModel(torlPath string, inputs []string, output string) *Model {
 	workingDirectory, _ := os.Getwd()
 
 	downloads := make(map[string]*Download)
+	var ordered []string
+	pending := 0
+
+	if queuePath != "" {
+		if items, err := LoadQueue(queuePath); err == nil {
+			for _, item := range items {
+				source := canonicalizeSource(item.Source)
+				if _, exists := downloads[source]; exists {
+					continue
+				}
+				out := item.Output
+				if out == "" {
+					out = output
+				}
+				downloads[source] = &Download{
+					ID:     source,
+					Output: out,
+					Status: "Paused",
+					Paused: true,
+					Peers:  []string{},
+				}
+				ordered = append(ordered, source)
+			}
+		}
+	}
+
 	for _, input := range inputs {
-		downloads[input] = &Download{
-			ID:     input,
+		source := canonicalizeSource(input)
+		if d, exists := downloads[source]; exists {
+			d.Paused = false
+			d.Status = "Starting"
+			d.Output = output
+			d.Done = false
+			d.Err = nil
+			pending++
+			continue
+		}
+		downloads[source] = &Download{
+			ID:     source,
+			Output: output,
 			Status: "Starting",
 			Peers:  []string{},
 		}
+		ordered = append(ordered, source)
+		pending++
 	}
 
 	return &Model{
 		TorlPath:     torlPath,
-		Inputs:       inputs,
+		Inputs:       ordered,
 		Output:       output,
 		Downloads:    downloads,
-		pendingCount: len(inputs),
+		pendingCount: pending,
 		processes:    make(map[string]*exec.Cmd),
 		stderrBufs:   make(map[string]string),
 		spinner:      sp,
 		progress:     prog,
 		messages:     []string{},
 		picker:       newTorrentPicker(workingDirectory),
+		queuePath:    queuePath,
 	}
 }
 
@@ -98,6 +145,7 @@ type Download struct {
 	LastDownloaded  int64
 	SpeedBps        float64
 	Paused          bool
+	Output          string
 }
 
 type Model struct {
@@ -118,6 +166,7 @@ type Model struct {
 	inputCursor  int
 	inputError   string
 	picker       *torrentPicker
+	queuePath    string
 
 	spinner  spinner.Model
 	progress progress.Model
@@ -126,7 +175,15 @@ type Model struct {
 func (m *Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.spinner.Tick, m.tick()}
 	for _, input := range m.Inputs {
-		cmds = append(cmds, m.spawnProcess(input, m.Output))
+		d := m.Downloads[input]
+		if d == nil || d.Paused {
+			continue
+		}
+		output := d.Output
+		if output == "" {
+			output = m.Output
+		}
+		cmds = append(cmds, m.spawnProcess(input, output))
 	}
 	return tea.Batch(cmds...)
 }
@@ -299,9 +356,12 @@ func (m *Model) handleEvent(event Event) {
 		d.Status = "Complete"
 		d.Percent = 1.0
 		d.Paused = false
+		m.persistQueueLocked()
 	case "error":
-		d.Err = fmt.Errorf(event.Message)
+		d.Err = fmt.Errorf("%s", event.Message)
 		d.Status = "Error"
+		d.Paused = true
+		m.persistQueueLocked()
 	}
 }
 
@@ -383,7 +443,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 		case "p":
-			m.togglePause(m.cursor)
+			return m, m.togglePause(m.cursor)
 		}
 	case tickMsg:
 		return m, m.tick()
@@ -403,7 +463,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		d.Err = msg.err
 		d.Status = "Error"
+		d.Paused = true
 		m.pendingCount--
+		m.persistQueueLocked()
 		m.mu.Unlock()
 		m.appendMessage(msg.err.Error())
 	case procDoneMsg:
@@ -415,6 +477,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.pendingCount--
+		if d.Done {
+			m.persistQueueLocked()
+		}
 		m.mu.Unlock()
 	case errMsg:
 		m.appendMessage(msg.err.Error())
@@ -577,40 +642,55 @@ func (m *Model) queueSource(raw string) (tea.Cmd, error) {
 		return nil, fmt.Errorf("download is already in the list")
 	}
 	m.Inputs = append(m.Inputs, source)
-	m.Downloads[source] = &Download{ID: source, Status: "Starting", Peers: []string{}}
+	m.Downloads[source] = &Download{
+		ID:     source,
+		Output: m.Output,
+		Status: "Starting",
+		Peers:  []string{},
+	}
 	m.pendingCount++
+	m.persistQueueLocked()
 	m.mu.Unlock()
 
 	return m.spawnProcess(source, m.Output), nil
 }
 
-func (m *Model) togglePause(idx int) {
+func (m *Model) togglePause(idx int) tea.Cmd {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if idx < 0 || idx >= len(m.Inputs) {
-		return
+		return nil
 	}
 	input := m.Inputs[idx]
 	d := m.Downloads[input]
 	if d == nil {
-		return
+		return nil
 	}
 
 	if d.Paused {
-		// Resume
 		d.Paused = false
 		d.Status = "Resuming"
 		d.SpeedBps = 0
-	} else if d.Status != "Complete" && d.Status != "Error" {
-		// Pause
+		d.Err = nil
+		m.persistQueueLocked()
+		output := d.Output
+		if output == "" {
+			output = m.Output
+		}
+		return m.spawnProcess(input, output)
+	}
+
+	if d.Status != "Complete" && d.Status != "Error" {
 		d.Paused = true
 		d.Status = "Paused"
 		d.SpeedBps = 0
 		if cmd, ok := m.processes[input]; ok && cmd.Process != nil {
 			_ = cmd.Process.Signal(syscall.SIGTERM)
 		}
+		m.persistQueueLocked()
 	}
+	return nil
 }
 
 func (m *Model) shutdownAll() {
@@ -627,6 +707,46 @@ func (m *Model) shutdownAll() {
 			}
 		}
 	}
+	m.persistQueueLocked()
+}
+
+func (m *Model) persistQueueLocked() {
+	if m.queuePath == "" {
+		return
+	}
+	items := make([]QueueItem, 0, len(m.Inputs))
+	for _, input := range m.Inputs {
+		d := m.Downloads[input]
+		if d == nil || d.Done {
+			continue
+		}
+		output := d.Output
+		if output == "" {
+			output = m.Output
+		}
+		items = append(items, QueueItem{
+			Source: canonicalizeSource(input),
+			Output: output,
+			Status: "paused",
+		})
+	}
+	if err := SaveQueue(m.queuePath, items); err != nil {
+		m.messages = append(m.messages, sanitizeTerminalText("queue save failed: "+err.Error()))
+		if len(m.messages) > 5 {
+			m.messages = m.messages[1:]
+		}
+	}
+}
+
+func canonicalizeSource(source string) string {
+	if source == "" || strings.HasPrefix(strings.ToLower(source), "magnet:") {
+		return source
+	}
+	abs, err := filepath.Abs(source)
+	if err != nil {
+		return source
+	}
+	return filepath.Clean(abs)
 }
 
 func (m *Model) View() string {

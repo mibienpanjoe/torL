@@ -1,38 +1,17 @@
-# Interactive TUI Workflow
+# Persistent TUI queue
 
-## Task 1: Launchable empty dashboard
+## Done
 
-- [x] `torl` forwards zero inputs to the TUI.
-- [x] The Go launcher accepts zero inputs.
-- [x] Empty state lists the available add actions.
-- [x] Dashboard stays open when the queue is empty or finishes.
-- Verify: focused Node test, `go test ./torl`, `go build ./...`.
-
-## Task 2: Dynamic source input
-
-- [x] `a` opens a focused source field.
-- [x] Paste/type accepts a magnet or `.torrent` path.
-- [x] Invalid and duplicate sources show an inline error.
-- [x] A valid source is appended and spawned.
-- Verify: `go test ./torl`.
-
-## Task 3: Integrated torrent picker
-
-- [x] `f` opens a file picker at the current directory.
-- [x] Only directories and `.torrent` files are selectable.
-- [x] Selection follows the same validation/add path.
-- Verify: `go test ./torl` and manual picker smoke check.
-
-## Task 4: Output selection and UX polish
-
-- [x] `o` edits the output directory for future additions.
-- [x] Empty, dashboard, dialog, and picker states have contextual help.
-- [x] README and command help describe no-argument usage and keys.
-- Verify: all Node/Go tests, Go build, package dry run, manual smoke check.
+- [x] `tui/torl/queue.go` load/save at user config path with 0600 perms.
+- [x] Restore incomplete items as Paused on launch (no auto-spawn).
+- [x] Persist on add/pause/resume/complete/error/quit; drop completed.
+- [x] Per-download output; resume respawns `torl-cli` (fixes prior resume bug).
+- [x] CLI positional inputs still auto-start and override restored paused.
+- [x] Go tests for queue + model integration; docs/spec/README/AGENTS updated.
 
 ## Not Doing
 
-- Persistent queue or download history.
+- Auto-resume on launch.
+- Completed download history / dismiss key.
+- Changing `.torl.state` or Node download protocol.
 - Native graphical file dialogs.
-- Removing or replacing `torl-cli`.
-- Changing torrent/network behavior.
