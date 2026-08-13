@@ -4,8 +4,8 @@ Source of truth for agent context. README.md and CONTRIBUTING.md are for human c
 
 ## Tech stack
 - Node.js >= 20 (ESM only: `"type": "module"`). Prefer current LTS via nvm: `source ~/.nvm/nvm.sh && nvm use 24`.
-- Single runtime dependency: `bencode` (ESM). Use native `BigInt` — never reintroduce `bignum`.
-- Optional Go >= 1.22 TUI: Bubble Tea in `tui/`.
+- Single Node runtime dependency: `bencode` (ESM). Use native `BigInt` — never reintroduce `bignum`.
+- Go >= 1.25.13 TUI and download engine: Bubble Tea and anacrolix/torrent in `tui/`.
 - Tests: built-in `node:test` + `node:assert` (no Jest/Mocha/Vitest). Go: `go test ./...` in `tui/`.
 
 ## Commands

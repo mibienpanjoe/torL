@@ -17,7 +17,7 @@ Thanks for your interest in contributing! This document covers how to set up the
 ### Requirements
 
 - [Node.js](https://nodejs.org/) >= 20.0.0
-- [Go](https://go.dev/) >= 1.22 (only if you want to build the TUI)
+- [Go](https://go.dev/) >= 1.25.13 (required to build the TUI and download engine)
 
 ### Install Dependencies
 
@@ -32,7 +32,7 @@ This also attempts to build the optional `torl-tui` binary if Go is available.
 ```
 .
 ├── index.js                  CLI entry point
-├── src/                      Core BitTorrent client (Node.js / ESM)
+├── src/                      Node.js CLI, engine adapter, and rollback engine
 │   ├── cli.js
 │   ├── download.js
 │   ├── tracker.js
@@ -48,8 +48,9 @@ This also attempts to build the optional `torl-tui` binary if Go is available.
 │   ├── magnet-parser.js
 │   ├── magnet-resolver.js
 │   └── metadata-downloader.js
-├── tui/                      Optional Go + Bubble Tea TUI
+├── tui/                      Go anacrolix engine + Bubble Tea TUI
 │   ├── main.go
+│   ├── engine/
 │   └── torl/
 ├── tests/                    Test suite using node:test
 │   ├── fixtures/
@@ -128,6 +129,8 @@ Run TUI tests:
 cd tui
 go test ./...
 ```
+
+The deterministic engine integration test uses loopback sockets only. Public-network tests must remain optional and separate.
 
 The Node.js `bin/torl-tui.js` wrapper looks for the binary at `tui/torl-tui` first, then in `$PATH`.
 

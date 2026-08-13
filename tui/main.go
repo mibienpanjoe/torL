@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -9,6 +10,7 @@ import (
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/torl/tui/engine"
 	"github.com/torl/tui/torl"
 )
 
@@ -21,6 +23,16 @@ func defaultOutputDir() string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--engine-json" {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		if err := engine.RunCommand(ctx, os.Args[2:], os.Stdout, engine.Run); err != nil {
+			fmt.Fprintf(os.Stderr, "Download failed: %s\n", engine.SanitizeError(err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
+
 	programName := filepath.Base(os.Args[0])
 	torlPath := "torl-cli"
 	outputDir := defaultOutputDir()

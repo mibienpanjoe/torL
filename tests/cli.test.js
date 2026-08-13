@@ -2,7 +2,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseArgs, getUsage, run, _run, getDefaultOutputDir } from '../src/cli.js';
+import { parseArgs, getUsage, run, _run, getDefaultOutputDir, selectDownloadEngine } from '../src/cli.js';
 
 describe('cli', () => {
   it('parses a torrent file argument', () => {
@@ -84,6 +84,12 @@ describe('cli', () => {
     assert.strictEqual(options.json, true);
   });
 
+  it('defaults to anacrolix and retains the bounded Node rollback', () => {
+    assert.equal(selectDownloadEngine({}, {}), 'anacrolix');
+    assert.equal(selectDownloadEngine({}, { TORL_DOWNLOAD_ENGINE: 'node' }), 'node');
+    assert.equal(selectDownloadEngine({}, { TORL_DOWNLOAD_ENGINE: 'anything-else' }), 'anacrolix');
+  });
+
   it('rejects --json and --quiet together', async () => {
     await assert.rejects(
       run(['node', 'torl-cli', 'file.torrent', '--json', '--quiet']),
@@ -91,20 +97,18 @@ describe('cli', () => {
     );
   });
 
-  it('propagates an aborted signal into magnet resolution', async () => {
+  it('does not start work for an already-aborted signal', async () => {
     const controller = new AbortController();
+    controller.abort();
     const pending = _run({
       inputs: ['magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678'],
       concurrency: 1,
       quiet: true,
       json: false,
+      engine: 'node',
       signal: controller.signal
     }, null);
-    setImmediate(() => controller.abort());
 
-    await assert.rejects(
-      pending,
-      /Magnet resolution aborted/
-    );
+    await assert.doesNotReject(pending);
   });
 });

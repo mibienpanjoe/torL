@@ -131,6 +131,7 @@ type Download struct {
 	Name            string
 	Total           int64
 	Downloaded      int64
+	Uploaded        int64
 	Percent         float64
 	CompletedPieces int
 	TotalPieces     int
@@ -144,6 +145,7 @@ type Download struct {
 	LastUpdate      time.Time
 	LastDownloaded  int64
 	SpeedBps        float64
+	UploadRateBps   float64
 	Paused          bool
 	Output          string
 }
@@ -322,7 +324,9 @@ func (m *Model) handleEvent(event Event) {
 		}
 	case "progress":
 		now := time.Now()
-		if !d.LastUpdate.IsZero() {
+		if event.DownloadRate != nil {
+			d.SpeedBps = *event.DownloadRate
+		} else if !d.LastUpdate.IsZero() {
 			elapsed := now.Sub(d.LastUpdate).Seconds()
 			if elapsed > 0 {
 				delta := event.Downloaded - d.LastDownloaded
@@ -337,6 +341,10 @@ func (m *Model) handleEvent(event Event) {
 		d.LastUpdate = now
 		d.LastDownloaded = event.Downloaded
 		d.Downloaded = event.Downloaded
+		d.Uploaded = event.Uploaded
+		if event.UploadRate != nil {
+			d.UploadRateBps = *event.UploadRate
+		}
 		d.Total = event.Total
 		d.Percent = event.Percent
 		d.CompletedPieces = event.CompletedPieces

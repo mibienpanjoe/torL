@@ -27,12 +27,12 @@ func TestParseEventStart(t *testing.T) {
 }
 
 func TestParseEventProgress(t *testing.T) {
-	line := []byte(`{"type":"progress","id":"file.torrent","downloaded":13,"total":13,"percent":1,"completedPieces":1,"totalPieces":1,"activePeers":1,"availablePeers":0}`)
+	line := []byte(`{"type":"progress","id":"file.torrent","downloaded":13,"uploaded":5,"downloadRate":1024,"uploadRate":128,"total":13,"percent":1,"completedPieces":1,"totalPieces":1,"activePeers":1,"availablePeers":0}`)
 	event, err := ParseEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event.Type != "progress" || event.ID != "file.torrent" || event.Percent != 1 || event.ActivePeers != 1 {
+	if event.Type != "progress" || event.ID != "file.torrent" || event.Percent != 1 || event.ActivePeers != 1 || event.DownloadRate == nil || *event.DownloadRate != 1024 || event.UploadRate == nil || *event.UploadRate != 128 || event.Uploaded != 5 {
 		t.Fatalf("unexpected event: %+v", event)
 	}
 }
@@ -54,6 +54,17 @@ func TestModelProgressEvent(t *testing.T) {
 	d := m.Downloads[id]
 	if d.Downloaded != 50 || d.Percent != 0.5 || d.ActivePeers != 3 {
 		t.Fatalf("model not updated: %+v", d)
+	}
+}
+
+func TestModelUsesReportedDownloadRate(t *testing.T) {
+	m := testModel(t, []string{"file.torrent"}, ".")
+	id := m.Inputs[0]
+	downloadRate, uploadRate := 4096.0, 512.0
+	m.handleEvent(Event{Type: "progress", ID: id, Downloaded: 50, Total: 100, Percent: 0.5, DownloadRate: &downloadRate, UploadRate: &uploadRate, Uploaded: 8})
+	d := m.Downloads[id]
+	if d.SpeedBps != 4096 || d.UploadRateBps != 512 || d.Uploaded != 8 {
+		t.Fatalf("model did not use engine rates: %+v", d)
 	}
 }
 

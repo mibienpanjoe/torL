@@ -5,7 +5,7 @@
 <h1 align="center">torL</h1>
 
 <p align="center">
-  A minimal, dependency-light BitTorrent client for Node.js.
+  A fast BitTorrent client with a Node.js CLI and an anacrolix-powered Go engine.
 </p>
 
 <p align="center">
@@ -21,10 +21,10 @@
 ## Features
 
 - **Torrent files & magnet links** — download from `.torrent` files or resolve `magnet:` links.
-- **Tracker + DHT peer discovery** — supports UDP and HTTP trackers plus Mainline DHT.
-- **Rarest-first piece selection** — prioritizes the pieces that are least available in the swarm.
-- **Pause & resume** — a `.torl.state` file stores progress; existing data is verified on restart.
-- **NAT traversal** — automatic UPnP IGD and NAT-PMP port mapping helpers.
+- **Mature BitTorrent engine** — anacrolix provides TCP/uTP peers, trackers, DHT, PEX, inbound connections, end-game behavior, and piece verification.
+- **Bandwidth utilization** — concurrent peer requests and upload reciprocity keep healthy swarms productive without seeding after completion.
+- **Pause & resume** — partial files are checked and resumed; legacy `.torl.state` files are retained during migration.
+- **NAT traversal** — automatic port mapping is enabled where the network supports it.
 - **Interactive TUI** — running `torl` opens a dashboard where downloads can be added, monitored, paused, and resumed; incomplete items are restored as paused on the next launch.
 - **Multiple downloads** — queue or run several torrents and magnet links concurrently.
 - **Fully tested** — fast, deterministic mock tests for the peer wire protocol, trackers, DHT, and NAT.
@@ -47,7 +47,7 @@ cd torL
 npm install
 ```
 
-The `torl` command opens the TUI; the underlying TUI binary (`torl-tui`) is downloaded automatically during `npm install` for your platform from the matching GitHub release. If a prebuilt binary is not available, it falls back to building from source when Go is installed.
+The `torl` command opens the TUI; the underlying TUI and download-engine binary (`torl-tui`) is downloaded automatically during `npm install` for your platform from the matching GitHub release. If a prebuilt binary is not available, building from source requires Go 1.25.13 or newer.
 
 ## TUI Usage
 
@@ -83,7 +83,7 @@ Inside the TUI:
 - `q` or `Ctrl+C` pauses all active downloads and exits.
 - `Esc` closes the active input or picker without changing anything.
 - Incomplete downloads are remembered in the TUI queue (`~/.config/torl/queue.json` on Linux; the platform user config dir elsewhere) and reappear as **Paused** next launch — press `p` to resume.
-- Piece progress is saved in a `.torl.state` file next to the download; resuming continues from verified on-disk data.
+- Partial files remain in the output directory and are verified when the download resumes. Older `.torl.state` files are left untouched for rollback compatibility.
 
 ## CLI Usage
 
@@ -125,12 +125,42 @@ torl-cli a.torrent b.torrent "magnet:?xt=urn:btih:..." -c 3
 
 Output is written to a directory named after the torrent inside the output directory.
 
+### Download engine
+
+Starting with v1.4.0, `torl-cli` delegates each torrent to the bundled
+`torl-tui` binary's headless anacrolix engine. The public commands and flags do
+not change: Node.js continues to coordinate multiple inputs while Go handles
+peer discovery, piece scheduling, verification, disk I/O, inbound peers, and
+upload reciprocity.
+
+Progress is measured from useful payload bytes and sampled once per second.
+The JSON stream keeps its existing fields and additively reports `uploaded`,
+`downloadRate`, and `uploadRate`. torL uploads while a download is active but
+exits when it completes; it does not remain running as a seeder.
+
+During the v1.4.0 canary release only, set `TORL_DOWNLOAD_ENGINE=node` to use
+the previous downloader if the new engine causes a compatibility problem:
+
+```bash
+TORL_DOWNLOAD_ENGINE=node torl-cli file.torrent
+```
+
+This rollback switch is temporary. It does not delete partial files or legacy
+`.torl.state` files.
+
 ## Development
 
 Run the test suite:
 
 ```bash
 npm test
+```
+
+Run the Go engine and TUI tests (Go 1.25.13+):
+
+```bash
+cd tui
+go test ./...
 ```
 
 Run a single test file:
@@ -151,8 +181,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, conventions, and how to submit
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Distributed binaries also contain third-party components; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Acknowledgements
 
-Built with [bencode](https://github.com/themasch/node-bencode) for torrent decoding and [Bubble Tea](https://github.com/charmbracelet/bubbletea) for the TUI.
+Built with [anacrolix/torrent](https://github.com/anacrolix/torrent) for the BitTorrent engine, [bencode](https://github.com/themasch/node-bencode) for the temporary Node rollback engine, and [Bubble Tea](https://github.com/charmbracelet/bubbletea) for the TUI.

@@ -1,17 +1,34 @@
-# Persistent TUI queue
+# anacrolix engine migration
 
-## Done
+## Approved
 
-- [x] `tui/torl/queue.go` load/save at user config path with 0600 perms.
-- [x] Restore incomplete items as Paused on launch (no auto-spawn).
-- [x] Persist on add/pause/resume/complete/error/quit; drop completed.
-- [x] Per-download output; resume respawns `torl-cli` (fixes prior resume bug).
-- [x] CLI positional inputs still auto-start and override restored paused.
-- [x] Go tests for queue + model integration; docs/spec/README/AGENTS updated.
+- [x] Approve `docs/specs/anacrolix-engine.md`.
+- [x] Approve a newer Go minimum and `github.com/anacrolix/torrent v1.61.0`; scanner-driven floor finalized at Go 1.25.13.
+- [x] Approve upload while downloading, with exit and no seeding after completion.
+- [x] Approve `TORL_DOWNLOAD_ENGINE=node` as a temporary one-release rollback.
 
-## Not Doing
+## Foundation
 
-- Auto-resume on launch.
-- Completed download history / dismiss key.
-- Changing `.torl.state` or Node download protocol.
-- Native graphical file dialogs.
+- [x] Pin dependency, update Go baseline/CI, and add MPL/source notices.
+- [x] Define and test the additive engine JSON contract.
+- [x] Pass module verification, vulnerability scan, Go tests, and cross-build smoke gate.
+
+## Replacement
+
+- [x] Implement and test the one-torrent Go engine lifecycle.
+- [x] Add and test internal `--engine-json` mode.
+- [x] Add and test the non-shelling Node engine runner and signal propagation.
+- [ ] Prove `.torrent`, magnet, single/multi-file, pause/resume, and corrupt-data behavior locally. (`.torrent` transfer and legacy cases pass; direct Go magnet/resume/corrupt fixtures remain.)
+
+## Cutover
+
+- [x] Teach the TUI to consume real byte rates additively.
+- [x] Make anacrolix default with tested Node rollback.
+- [ ] Record controlled throughput and cross-platform release evidence.
+- [x] Update README, CONTRIBUTING, AGENTS, and CHANGELOG.
+- [x] Complete code, security, compatibility, and packaging review. (Controlled throughput evidence remains before release.)
+
+## Deferred removal
+
+- [ ] Measure canary rollback usage.
+- [ ] Seek separate approval for Node engine removal and any `.torl.state` retirement.

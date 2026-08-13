@@ -6,20 +6,23 @@ import (
 )
 
 type Event struct {
-	ID              string  `json:"id,omitempty"`
-	Type            string  `json:"type"`
-	Name            string  `json:"name,omitempty"`
-	Total           int64   `json:"total,omitempty"`
-	Downloaded      int64   `json:"downloaded,omitempty"`
-	Percent         float64 `json:"percent,omitempty"`
-	CompletedPieces int     `json:"completedPieces,omitempty"`
-	TotalPieces     int     `json:"totalPieces,omitempty"`
-	ActivePeers     int     `json:"activePeers,omitempty"`
-	AvailablePeers  int     `json:"availablePeers,omitempty"`
-	Action          string  `json:"action,omitempty"`
-	Peer            string  `json:"peer,omitempty"`
-	Path            string  `json:"path,omitempty"`
-	Message         string  `json:"message,omitempty"`
+	ID              string   `json:"id,omitempty"`
+	Type            string   `json:"type"`
+	Name            string   `json:"name,omitempty"`
+	Total           int64    `json:"total,omitempty"`
+	Downloaded      int64    `json:"downloaded,omitempty"`
+	Uploaded        int64    `json:"uploaded,omitempty"`
+	DownloadRate    *float64 `json:"downloadRate,omitempty"`
+	UploadRate      *float64 `json:"uploadRate,omitempty"`
+	Percent         float64  `json:"percent,omitempty"`
+	CompletedPieces int      `json:"completedPieces,omitempty"`
+	TotalPieces     int      `json:"totalPieces,omitempty"`
+	ActivePeers     int      `json:"activePeers,omitempty"`
+	AvailablePeers  int      `json:"availablePeers,omitempty"`
+	Action          string   `json:"action,omitempty"`
+	Peer            string   `json:"peer,omitempty"`
+	Path            string   `json:"path,omitempty"`
+	Message         string   `json:"message,omitempty"`
 }
 
 func ParseEvent(line []byte) (Event, error) {

@@ -8,6 +8,7 @@ import * as torrentParser from './torrent-parser.js';
 import { parseMagnetLink } from './magnet-parser.js';
 import { resolveMagnet } from './magnet-resolver.js';
 import { readFileSync } from 'fs';
+import { runEngine } from './engine-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
@@ -126,6 +127,10 @@ export async function _run(options, progressLogger) {
   return 0;
 }
 
+export function selectDownloadEngine(options = {}, env = process.env) {
+  return (options.engine ?? env.TORL_DOWNLOAD_ENGINE) === 'node' ? 'node' : 'anacrolix';
+}
+
 class MultiProgressLogger {
   constructor() {
     this.states = new Map();
@@ -181,6 +186,19 @@ export async function downloadAll(inputs, options, progressLogger, downloadOneFn
 }
 
 async function downloadOne(input, options, progressLogger) {
+  if (selectDownloadEngine(options) === 'anacrolix') {
+    return runEngine(input, options, event => {
+      if (options.json) {
+        emitJson(event);
+      } else if (!options.quiet && progressLogger) {
+        progressLogger.update(input, event);
+      }
+    });
+  }
+  return downloadOneNode(input, options, progressLogger);
+}
+
+async function downloadOneNode(input, options, progressLogger) {
   const isMagnet = input.startsWith('magnet:');
   const torrent = isMagnet
     ? await resolveMagnet(parseMagnetLink(input), { signal: options.signal })

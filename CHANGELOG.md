@@ -2,6 +2,20 @@
 
 All notable changes to torL are documented in this file.
 
+## [1.4.0] - 2026-08-13
+
+### Changed
+
+- Use `github.com/anacrolix/torrent` v1.61.0 as the default download engine while preserving the existing `torl`, `torl-cli`, JSON, output, and queue interfaces.
+- Raise the Go source-build and release baseline to Go 1.25.13 so release binaries include current standard-library security fixes.
+- Upload while downloading for BitTorrent reciprocity, then stop at completion rather than seeding indefinitely.
+- Report byte-level download and upload rates from the engine; the TUI consumes the download rate additively.
+- Retain the legacy Node downloader for one canary release through `TORL_DOWNLOAD_ENGINE=node` and leave legacy `.torl.state` files untouched.
+
+### Added
+
+- Add a deterministic loopback seeder/leecher integration test and third-party MPL/source notices.
+
 ## [1.3.2] - 2026-08-02
 
 ### Fixed
